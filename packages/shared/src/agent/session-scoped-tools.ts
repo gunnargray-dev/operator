@@ -2624,6 +2624,249 @@ Returns the result of the script evaluation.`,
 }
 
 // ============================================================
+// Web Search Tool (Brave Search API)
+// ============================================================
+
+/**
+ * Brave Search API response types
+ */
+interface BraveSearchResult {
+  title: string;
+  url: string;
+  description: string;
+  age?: string;
+}
+
+interface BraveSearchResponse {
+  web?: {
+    results?: Array<{
+      title: string;
+      url: string;
+      description: string;
+      age?: string;
+    }>;
+  };
+  news?: {
+    results?: Array<{
+      title: string;
+      url: string;
+      description: string;
+      age?: string;
+    }>;
+  };
+  query?: {
+    original: string;
+  };
+}
+
+/**
+ * Create a session-scoped web_search tool.
+ * Searches the web using the Brave Search API.
+ */
+export function createWebSearchTool(sessionId: string) {
+  return tool(
+    'web_search',
+    `Search the web for current information using Brave Search.
+
+Use this tool when you need to:
+- Find current/recent information not in your training data
+- Research topics, news, or events
+- Verify facts or find sources
+- Get up-to-date documentation or API references
+
+The search returns titles, URLs, descriptions, and age of results.
+
+**Parameters:**
+- query: The search query (required)
+- count: Number of results to return (1-20, default 10)
+- search_type: Type of search - 'web' (default) or 'news'
+
+**Example:**
+\`\`\`json
+{
+  "query": "Claude API documentation 2025",
+  "count": 5,
+  "search_type": "web"
+}
+\`\`\`
+
+Note: Requires a Brave Search API key to be configured. If not configured, the tool will return an error with instructions.`,
+    {
+      query: z.string().describe('The search query'),
+      count: z.number().min(1).max(20).default(10).describe('Number of results (1-20)'),
+      search_type: z.enum(['web', 'news']).default('web').describe('Type of search'),
+    },
+    async ({ query, count, search_type }) => {
+      debug(`[web_search] Session ${sessionId}: Searching for "${query}" (type: ${search_type}, count: ${count})`);
+
+      try {
+        // Get the Brave API key from credentials
+        const credManager = getCredentialManager();
+        const apiKey = await credManager.getBraveApiKey();
+
+        if (!apiKey) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Web search is not configured. To enable web search:
+
+1. Get a free Brave Search API key from https://brave.com/search/api/
+2. Run this command to save your API key:
+   Ask the user to provide their Brave API key, then save it using source_credential_prompt or by setting it directly.
+
+The free tier includes 2,000 queries/month.`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Build the API URL
+        const params = new URLSearchParams({
+          q: query,
+          count: String(count),
+        });
+
+        const endpoint = search_type === 'news'
+          ? 'https://api.search.brave.com/res/v1/news/search'
+          : 'https://api.search.brave.com/res/v1/web/search';
+
+        const response = await fetch(`${endpoint}?${params}`, {
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Subscription-Token': apiKey,
+          },
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          debug(`[web_search] API error: ${response.status} ${errorText}`);
+
+          if (response.status === 401) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Brave Search API key is invalid or expired. Please update your API key.`,
+              }],
+              isError: true,
+            };
+          }
+
+          if (response.status === 429) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Brave Search rate limit exceeded. Please try again later or upgrade your API plan.`,
+              }],
+              isError: true,
+            };
+          }
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Search failed: ${response.status} ${response.statusText}`,
+            }],
+            isError: true,
+          };
+        }
+
+        const data = await response.json() as BraveSearchResponse;
+        const results = search_type === 'news'
+          ? data.news?.results || []
+          : data.web?.results || [];
+
+        if (results.length === 0) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `No results found for "${query}".`,
+            }],
+            isError: false,
+          };
+        }
+
+        // Format results
+        const formattedResults = results.map((result: BraveSearchResult, index: number) => {
+          const age = result.age ? ` (${result.age})` : '';
+          return `${index + 1}. **${result.title}**${age}
+   ${result.url}
+   ${result.description}`;
+        }).join('\n\n');
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `**Search results for "${query}":**\n\n${formattedResults}`,
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        debug('[web_search] Error:', error);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Search error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+/**
+ * Create a session-scoped set_brave_api_key tool.
+ * Saves the Brave Search API key for web search functionality.
+ */
+export function createSetBraveApiKeyTool(sessionId: string) {
+  return tool(
+    'set_brave_api_key',
+    `Save a Brave Search API key for web search functionality.
+
+Call this tool when the user provides their Brave Search API key.
+The key will be securely stored and used for future web_search calls.
+
+Get a free API key at: https://brave.com/search/api/ (2,000 queries/month free)
+
+**Example:**
+\`\`\`json
+{
+  "api_key": "BSA..."
+}
+\`\`\``,
+    {
+      api_key: z.string().min(1).describe('The Brave Search API key'),
+    },
+    async ({ api_key }) => {
+      debug(`[set_brave_api_key] Session ${sessionId}: Saving Brave API key`);
+
+      try {
+        const credManager = getCredentialManager();
+        await credManager.setBraveApiKey(api_key);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Brave Search API key saved successfully. You can now use the web_search tool.`,
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        debug('[set_brave_api_key] Error:', error);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Failed to save API key: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+// ============================================================
 // Session-Scoped Tools Provider
 // ============================================================
 
@@ -2674,11 +2917,15 @@ export function getSessionScopedTools(sessionId: string, workspaceRootPath: stri
         createBrowserCloseTool(sessionId),
         createBrowserWaitTool(sessionId),
         createBrowserEvaluateTool(sessionId),
+        // Web search tools (Brave Search API)
+        createWebSearchTool(sessionId),
+        createSetBraveApiKeyTool(sessionId),
       ],
     });
     sessionScopedToolsCache.set(cacheKey, cached);
     debug(`[SessionScopedTools] Created tools provider for session ${sessionId} in workspace ${workspaceRootPath}`);
     debug(`[SessionScopedTools] Browser tools registered: browser_navigate, browser_click, browser_type, browser_scroll, browser_screenshot, browser_close, browser_wait, browser_evaluate`);
+    debug(`[SessionScopedTools] Web search tools registered: web_search, set_brave_api_key`);
   }
   return cached;
 }

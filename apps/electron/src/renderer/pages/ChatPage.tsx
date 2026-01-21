@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, PanelRightOpen, PanelRightClose } from 'lucide-react'
 import { ChatDisplay } from '@/components/app-shell/ChatDisplay'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
@@ -18,6 +18,9 @@ import { rendererPerf } from '@/lib/perf'
 import { routes } from '@/lib/navigate'
 import { ensureSessionMessagesLoadedAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { getSessionTitle } from '@/utils/session'
+import { sessionArtifactsAtomFamily, canvasVisibleAtomFamily, toggleCanvasAtom } from '@/atoms/artifacts'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export interface ChatPageProps {
   sessionId: string
@@ -64,6 +67,12 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   // Use per-session atom for isolated updates
   const session = useSessionData(sessionId)
+
+  // Canvas state - for toggling canvas visibility when artifacts exist
+  const artifacts = useAtomValue(sessionArtifactsAtomFamily(sessionId))
+  const canvasVisible = useAtomValue(canvasVisibleAtomFamily(sessionId))
+  const toggleCanvas = useSetAtom(toggleCanvasAtom)
+  const hasArtifacts = artifacts.length > 0
 
   // Track if messages are loaded for this session (for lazy loading)
   const loadedSessions = useAtomValue(loadedSessionsAtom)
@@ -286,6 +295,34 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     handleDelete,
   ])
 
+  // Canvas toggle handler
+  const handleToggleCanvas = React.useCallback(() => {
+    toggleCanvas(sessionId)
+  }, [sessionId, toggleCanvas])
+
+  // Canvas toggle button - only shown when artifacts exist
+  const canvasToggleButton = hasArtifacts ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleToggleCanvas}
+          className="h-8 w-8"
+        >
+          {canvasVisible ? (
+            <PanelRightClose className="h-4 w-4" />
+          ) : (
+            <PanelRightOpen className="h-4 w-4" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {canvasVisible ? 'Hide Canvas' : 'Show Canvas'}
+      </TooltipContent>
+    </Tooltip>
+  ) : null
+
   // Handle missing session - loading or deleted
   if (!session) {
     if (sessionMeta) {
@@ -368,7 +405,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   return (
     <>
       <div className="h-full flex flex-col">
-        <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
+        <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={<>{canvasToggleButton}{rightSidebarButton}</>} isRegeneratingTitle={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <CanvasSplitView sessionId={sessionId} headerHeight={50}>
             <ChatDisplay

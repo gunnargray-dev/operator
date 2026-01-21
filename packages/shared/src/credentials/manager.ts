@@ -316,6 +316,22 @@ export class CredentialManager {
     // Consider expired if within 5 minutes of expiry
     return Date.now() > credential.expiresAt - 5 * 60 * 1000;
   }
+
+  /** Get Brave Search API key */
+  async getBraveApiKey(): Promise<string | null> {
+    const cred = await this.get({ type: 'brave_api_key' });
+    return cred?.value || null;
+  }
+
+  /** Set Brave Search API key */
+  async setBraveApiKey(key: string): Promise<void> {
+    await this.set({ type: 'brave_api_key' }, { value: key });
+  }
+
+  /** Delete Brave Search API key */
+  async deleteBraveApiKey(): Promise<boolean> {
+    return this.delete({ type: 'brave_api_key' });
+  }
 }
 
 // Singleton instance

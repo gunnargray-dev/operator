@@ -26,6 +26,7 @@ export type CredentialType =
   | 'workspace_bearer'
   | 'mcp_oauth'
   | 'api_key'
+  | 'brave_api_key'      // Brave Search API key for web search
   // Source credentials (stored at ~/.craft-agent/workspaces/{ws}/sources/{slug}/)
   | 'source_oauth'       // OAuth tokens for MCP/API sources
   | 'source_bearer'      // Bearer tokens
@@ -41,6 +42,7 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'workspace_bearer',
   'mcp_oauth',
   'api_key',
+  'brave_api_key',
   // Source credentials
   'source_oauth',
   'source_bearer',
