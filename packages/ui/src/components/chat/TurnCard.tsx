@@ -972,14 +972,18 @@ export function ResponseCard({
 
     return (
       <>
-        <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden relative group">
+        <div className={cn(
+          "relative group",
+          // Plans keep the card styling for visual distinction
+          isPlan && "bg-background shadow-minimal rounded-[8px] overflow-hidden"
+        )}>
           {/* Fullscreen button - top right corner, visible on hover */}
           <button
             onClick={() => setIsFullscreen(true)}
             className={cn(
-              "absolute top-2 right-2 p-1 rounded-[6px] transition-all z-10",
+              "absolute top-0 right-0 p-1 rounded-[6px] transition-all z-10",
               "opacity-0 group-hover:opacity-100",
-              "bg-background shadow-minimal",
+              "bg-background/80 backdrop-blur-sm",
               "text-muted-foreground/50 hover:text-foreground",
               "focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:opacity-100"
             )}
@@ -1001,17 +1005,20 @@ export function ResponseCard({
             </div>
           )}
 
-          {/* Scrollable content area with subtle fade at edges (dark mode only) */}
+          {/* Content area - inline for responses, scrollable for plans */}
           <div
-            className="pl-[22px] pr-[16px] py-3 text-sm overflow-y-auto"
-            style={{
+            className={cn(
+              "text-sm",
+              isPlan ? "pl-[22px] pr-[16px] py-3 overflow-y-auto" : "pl-[6px] pr-2"
+            )}
+            style={isPlan ? {
               maxHeight: MAX_HEIGHT,
               // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
               ...(isDarkMode && {
                 maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
                 WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
               }),
-            }}
+            } : undefined}
           >
             <Markdown
               mode="minimal"
@@ -1022,10 +1029,13 @@ export function ResponseCard({
             </Markdown>
           </div>
 
-          {/* Footer with actions */}
+          {/* Footer with actions - inline subtle for responses, bordered for plans */}
           <div className={cn(
-            "pl-4 pr-2.5 py-2 border-t border-border/30 flex items-center justify-between bg-muted/20",
-            SIZE_CONFIG.fontSize
+            "flex items-center justify-between",
+            SIZE_CONFIG.fontSize,
+            isPlan
+              ? "pl-4 pr-2.5 py-2 border-t border-border/30 bg-muted/20"
+              : "pl-[6px] pr-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
           )}>
             {/* Left side - Copy and View as Markdown */}
             <div className="flex items-center gap-3">
@@ -1099,22 +1109,11 @@ export function ResponseCard({
     )
   }
 
-  // Streaming response - show throttled content with spinner
+  // Streaming response - show throttled content inline with spinner
   return (
-    <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden">
-      {/* Content area - uses displayedText (throttled) for performance */}
-      {/* Subtle fade at top and bottom edges (dark mode only) */}
-      <div
-        className="pl-[22px] pr-4 py-3 text-sm overflow-y-auto"
-        style={{
-          maxHeight: MAX_HEIGHT,
-          // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
-          ...(isDarkMode && {
-            maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-          }),
-        }}
-      >
+    <div className="relative group">
+      {/* Content area - inline, uses displayedText (throttled) for performance */}
+      <div className="pl-[6px] pr-2 text-sm">
         <Markdown
           mode="minimal"
           onUrlClick={onOpenUrl}
@@ -1124,8 +1123,8 @@ export function ResponseCard({
         </Markdown>
       </div>
 
-      {/* Footer */}
-      <div className={cn("px-4 py-2 border-t border-border/30 flex items-center bg-muted/20", SIZE_CONFIG.fontSize)}>
+      {/* Footer - inline subtle indicator */}
+      <div className={cn("pl-[6px] pr-2 py-1.5 flex items-center", SIZE_CONFIG.fontSize)}>
         <div className="flex items-center gap-2 text-muted-foreground">
           <Spinner className={SIZE_CONFIG.spinnerSize} />
           <span>Streaming...</span>
