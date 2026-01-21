@@ -48,6 +48,24 @@ export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 import type { LoadedSkill, SkillMetadata } from '@craft-agent/shared/skills/types';
 export type { LoadedSkill, SkillMetadata };
 
+// Import artifact types
+import type { AnyArtifact, ArtifactMeta } from './artifact-types';
+export type { AnyArtifact, ArtifactMeta };
+export * from './artifact-types';
+
+// Browser control state for Manus-like browser capabilities
+export type BrowserControlState = 'idle' | 'agent' | 'user';
+
+// Browser command types for IPC
+export type BrowserCommand =
+  | { type: 'launch'; viewport?: { width: number; height: number } }
+  | { type: 'close' }
+  | { type: 'takeover' }
+  | { type: 'handback' }
+  | { type: 'click'; x: number; y: number }
+  | { type: 'keypress'; key: string; modifiers?: string[] }
+  | { type: 'scroll'; direction: 'up' | 'down'; amount?: number };
+
 
 /**
  * File/directory entry in a skill folder
@@ -371,6 +389,16 @@ export type SessionEvent =
   | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
   // Real-time usage update during processing (for context display)
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
+  // Artifact events (Canvas capabilities)
+  | { type: 'artifact_created'; sessionId: string; artifact: AnyArtifact }
+  | { type: 'artifact_updated'; sessionId: string; artifactId: string; changes: Partial<AnyArtifact> }
+  | { type: 'artifact_deleted'; sessionId: string; artifactId: string }
+  // Browser events (Manus-like browser control)
+  | { type: 'browser_screenshot'; sessionId: string; imageBase64: string; controlState: BrowserControlState }
+  | { type: 'browser_navigated'; sessionId: string; url: string; title?: string }
+  | { type: 'browser_control_changed'; sessionId: string; controlState: BrowserControlState }
+  | { type: 'browser_closed'; sessionId: string }
+  | { type: 'browser_error'; sessionId: string; error: string }
 
 // Options for sendMessage
 export interface SendMessageOptions {
@@ -619,6 +647,9 @@ export const IPC_CHANNELS = {
   BADGE_DRAW: 'badge:draw',  // Broadcast: { count: number, iconDataUrl: string }
   WINDOW_FOCUS_STATE: 'window:focusState',  // Broadcast: boolean (isFocused)
   WINDOW_GET_FOCUS_STATE: 'window:getFocusState',
+
+  // Browser control (Manus-like browser automation)
+  BROWSER_COMMAND: 'browser:command',
 } as const
 
 // Re-import types for ElectronAPI
@@ -830,6 +861,9 @@ export interface ElectronAPI {
   // Theme preferences sync across windows (mode, colorTheme, font)
   broadcastThemePreferences(preferences: { mode: string; colorTheme: string; font: string }): Promise<void>
   onThemePreferencesChange(callback: (preferences: { mode: string; colorTheme: string; font: string }) => void): () => void
+
+  // Browser control (Manus-like browser automation)
+  browserCommand?(sessionId: string, command: BrowserCommand): Promise<void>
 }
 
 /**
@@ -910,6 +944,8 @@ export type RightSidebarPanel =
   | { type: 'sessionMetadata' }
   | { type: 'files'; path?: string }
   | { type: 'history' }
+  | { type: 'artifacts' }
+  | { type: 'browser' }
   | { type: 'none' }
 
 /**

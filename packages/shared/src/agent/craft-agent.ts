@@ -383,7 +383,15 @@ export class CraftAgent {
    * Get the workspace root path for workspace-scoped operations.
    */
   private get workspaceRootPath(): string {
-    return this.config.workspace.rootPath;
+    const rootPath = this.config.workspace?.rootPath;
+    if (!rootPath) {
+      console.error('[CraftAgent] ERROR: workspaceRootPath is undefined!', {
+        config: this.config,
+        workspace: this.config.workspace,
+      });
+      throw new Error('Workspace rootPath is undefined - this is a configuration error');
+    }
+    return rootPath;
   }
 
   // Callback for permission requests - set by application to receive permission prompts
@@ -420,6 +428,14 @@ export class CraftAgent {
   // The callback should enable the source and return true if successful, false otherwise.
   // This enables auto-enabling sources when the agent tries to use their tools.
   public onSourceActivationRequest: ((sourceSlug: string) => Promise<boolean>) | null = null;
+
+  // Callback for browser control commands from browser tools
+  // Returns command result (success/error, screenshot data, etc.)
+  public onBrowserCommand: ((command: import('./session-scoped-tools').BrowserCommand) => Promise<import('./session-scoped-tools').BrowserCommandResult>) | null = null;
+
+  // Callback for artifact events from create_artifact/update_artifact tools
+  // Triggers Canvas UI updates
+  public onArtifactEvent: ((event: import('./session-scoped-tools').ArtifactEvent) => void) | null = null;
 
   constructor(config: CraftAgentConfig) {
     // Resolve model: prioritize session model > config model > global config > DEFAULT_MODEL
@@ -461,6 +477,17 @@ export class CraftAgent {
       onAuthRequest: (request) => {
         this.onDebug?.(`[CraftAgent] onAuthRequest received: ${request.sourceSlug} (type: ${request.type})`);
         this.onAuthRequest?.(request);
+      },
+      onBrowserCommand: async (command) => {
+        this.onDebug?.(`[CraftAgent] onBrowserCommand received: ${command.type}`);
+        if (!this.onBrowserCommand) {
+          return { success: false, error: 'Browser control not available' };
+        }
+        return this.onBrowserCommand(command);
+      },
+      onArtifactEvent: (event) => {
+        this.onDebug?.(`[CraftAgent] onArtifactEvent received: ${event.type} ${event.artifactId}`);
+        this.onArtifactEvent?.(event);
       },
     });
 
@@ -1454,8 +1481,8 @@ export class CraftAgent {
         },
         // Selectively disable tools - file tools are disabled (use MCP), web/code controlled by settings
         disallowedTools,
-        // Load workspace as SDK plugin (enables skills, commands, agents from workspace)
-        plugins: [{ type: 'local' as const, path: this.workspaceRootPath }],
+        // TEMPORARILY DISABLED: Load workspace as SDK plugin (enables skills, commands, agents from workspace)
+        // plugins: [{ type: 'local' as const, path: this.workspaceRootPath }],
       };
 
       // Track whether we're trying to resume a session (for error handling)
@@ -1945,8 +1972,13 @@ export class CraftAgent {
 
     } catch (error) {
       // Debug: log outer catch trigger (stderr to avoid SDK JSON pollution)
-      console.error(`[CraftAgent] OUTER CATCH triggered: ${error instanceof Error ? error.message : String(error)}`);
-      console.error(`[CraftAgent] Error stack: ${error instanceof Error ? error.stack : 'no stack'}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : 'no stack';
+      console.error(`[CraftAgent] OUTER CATCH triggered: ${errMsg}`);
+      console.error(`[CraftAgent] Error stack: ${errStack}`);
+      // Also emit as debug for logging
+      this.onDebug?.(`[CraftAgent] ERROR: ${errMsg}`);
+      this.onDebug?.(`[CraftAgent] STACK: ${errStack}`);
 
       const errorMessage = error instanceof Error ? error.message : String(error);
 

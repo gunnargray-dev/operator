@@ -47,6 +47,8 @@ import { type Session, type Message, type SessionEvent, type FileAttachment, typ
 import { generateSessionTitle, regenerateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf } from '@craft-agent/shared/utils'
 import { DEFAULT_MODEL } from '@craft-agent/shared/config'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
+import { BrowserInstance, type BrowserCommandResult } from '@craft-agent/shared/browser'
+import type { BrowserCommand, BrowserControlState } from '../shared/types'
 
 /**
  * Sanitize message content for use as session title.
@@ -205,6 +207,8 @@ interface ManagedSession {
   // Pending auth request tracking (for unified auth flow)
   pendingAuthRequestId?: string
   pendingAuthRequest?: AuthRequest
+  // Browser instance for Manus-like browser control
+  browserInstance?: BrowserInstance
 }
 
 // Convert runtime Message to StoredMessage for persistence
@@ -512,25 +516,42 @@ export class SessionManager {
   async initialize(): Promise<void> {
     // Set path to Claude Code executable (cli.js from SDK)
     // In packaged app: use app.getAppPath() (points to app folder, ASAR is disabled)
-    // In development: use process.cwd()
+    // In development: use process.cwd(), but also check monorepo root for hoisted packages
     const basePath = app.isPackaged ? app.getAppPath() : process.cwd()
 
-    const cliPath = join(basePath, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
+    let cliPath = join(basePath, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
     if (!existsSync(cliPath)) {
-      const error = `Claude Code SDK not found at ${cliPath}. The app package may be corrupted.`
-      sessionLog.error(error)
-      throw new Error(error)
+      // In monorepo dev mode, packages are hoisted to root node_modules
+      const monorepoRoot = join(basePath, '..', '..')
+      const hoistedCliPath = join(monorepoRoot, 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
+      if (existsSync(hoistedCliPath)) {
+        cliPath = hoistedCliPath
+        sessionLog.info('Using hoisted SDK from monorepo root:', cliPath)
+      } else {
+        const error = `Claude Code SDK not found at ${cliPath} or ${hoistedCliPath}. The app package may be corrupted.`
+        sessionLog.error(error)
+        throw new Error(error)
+      }
     }
     sessionLog.info('Setting pathToClaudeCodeExecutable:', cliPath)
     setPathToClaudeCodeExecutable(cliPath)
 
     // Set path to fetch interceptor for SDK subprocess
     // This interceptor captures API errors and adds metadata to MCP tool schemas
-    const interceptorPath = join(basePath, 'packages', 'shared', 'src', 'network-interceptor.ts')
+    // In monorepo, packages are at the root level
+    const monorepoRoot = app.isPackaged ? basePath : join(basePath, '..', '..')
+    let interceptorPath = join(basePath, 'packages', 'shared', 'src', 'network-interceptor.ts')
     if (!existsSync(interceptorPath)) {
-      const error = `Network interceptor not found at ${interceptorPath}. The app package may be corrupted.`
-      sessionLog.error(error)
-      throw new Error(error)
+      // Try monorepo root
+      const rootInterceptorPath = join(monorepoRoot, 'packages', 'shared', 'src', 'network-interceptor.ts')
+      if (existsSync(rootInterceptorPath)) {
+        interceptorPath = rootInterceptorPath
+        sessionLog.info('Using interceptor from monorepo root:', interceptorPath)
+      } else {
+        const error = `Network interceptor not found at ${interceptorPath} or ${rootInterceptorPath}. The app package may be corrupted.`
+        sessionLog.error(error)
+        throw new Error(error)
+      }
     }
     // Skip interceptor on Windows development (--preload is bun-specific, not supported by node)
     if (process.platform !== 'win32' || app.isPackaged) {
@@ -1458,6 +1479,116 @@ export class SessionManager {
         setPermissionMode(managed.id, managed.permissionMode)
         sessionLog.info(`Applied permission mode '${managed.permissionMode}' to agent for session ${managed.id}`)
       }
+
+      // Wire up onBrowserCommand to handle browser control from browser tools
+      managed.agent.onBrowserCommand = async (command) => {
+        sessionLog.info(`Browser command for session ${managed.id}:`, command.type)
+
+        // Ensure browser instance exists for navigation commands
+        if (!managed.browserInstance && command.type === 'navigate') {
+          managed.browserInstance = new BrowserInstance({
+            viewport: { width: 1280, height: 720 },
+            headless: false, // Show browser for Manus-like experience
+            screenshotInterval: 200, // 5 FPS streaming
+            onScreenshot: (imageBase64, controlState) => {
+              this.sendEvent({
+                type: 'browser_screenshot',
+                sessionId: managed.id,
+                imageBase64,
+                controlState,
+              }, managed.workspace.id)
+            },
+            onNavigate: (url, title) => {
+              this.sendEvent({
+                type: 'browser_navigated',
+                sessionId: managed.id,
+                url,
+                title,
+              }, managed.workspace.id)
+            },
+            onControlChange: (controlState) => {
+              this.sendEvent({
+                type: 'browser_control_changed',
+                sessionId: managed.id,
+                controlState,
+              }, managed.workspace.id)
+            },
+            onError: (error) => {
+              this.sendEvent({
+                type: 'browser_error',
+                sessionId: managed.id,
+                error,
+              }, managed.workspace.id)
+            },
+            onClose: () => {
+              this.sendEvent({
+                type: 'browser_closed',
+                sessionId: managed.id,
+              }, managed.workspace.id)
+              managed.browserInstance = undefined
+            },
+          })
+          await managed.browserInstance.launch()
+        }
+
+        const browser = managed.browserInstance
+        if (!browser) {
+          return { success: false, error: 'Browser not active' }
+        }
+
+        // Execute command on browser instance
+        switch (command.type) {
+          case 'navigate':
+            return browser.navigate(command.url || '')
+          case 'click':
+            return browser.click({ selector: command.selector, x: command.x, y: command.y })
+          case 'type':
+            return browser.type(command.text || '', { selector: command.selector, pressEnter: command.pressEnter })
+          case 'scroll':
+            return browser.scroll(command.direction || 'down', command.amount)
+          case 'screenshot':
+            return browser.screenshot()
+          case 'close':
+            return browser.close()
+          case 'wait':
+            return browser.wait(command.ms || 1000)
+          case 'evaluate':
+            return browser.evaluate(command.script || '')
+          default:
+            return { success: false, error: `Unknown browser command: ${command.type}` }
+        }
+      }
+
+      // Wire up onArtifactEvent to emit artifact events to the UI
+      managed.agent.onArtifactEvent = (event) => {
+        sessionLog.info(`Artifact event for session ${managed.id}:`, event.type, event.artifactId)
+
+        switch (event.type) {
+          case 'created':
+            this.sendEvent({
+              type: 'artifact_created',
+              sessionId: managed.id,
+              artifact: event.artifact,
+            }, managed.workspace.id)
+            break
+          case 'updated':
+            this.sendEvent({
+              type: 'artifact_updated',
+              sessionId: managed.id,
+              artifactId: event.artifactId,
+              changes: event.changes || {},
+            }, managed.workspace.id)
+            break
+          case 'deleted':
+            this.sendEvent({
+              type: 'artifact_deleted',
+              sessionId: managed.id,
+              artifactId: event.artifactId,
+            }, managed.workspace.id)
+            break
+        }
+      }
+
       end()
     }
     return managed.agent
@@ -1994,6 +2125,11 @@ export class SessionManager {
 
     // Clean up session-scoped tool callbacks to prevent memory accumulation
     unregisterSessionScopedToolCallbacks(sessionId)
+
+    // Close browser instance if active
+    if (managed.browserInstance) {
+      await managed.browserInstance.close()
+    }
 
     // Dispose agent to clean up ConfigWatchers, event listeners, MCP connections
     if (managed.agent) {
@@ -2975,6 +3111,8 @@ To view this task's output:
       }
 
       case 'error':
+        // Log ALL error events for debugging
+        sessionLog.error('ERROR EVENT:', event.message)
         // Skip abort errors - these are expected when force-aborting via AbortController
         if (event.message.includes('aborted') || event.message.includes('AbortError')) {
           sessionLog.info('Skipping abort error event (expected during interrupt)')
@@ -3235,5 +3373,98 @@ To view this task's output:
     }
 
     sessionLog.info('Cleanup complete')
+  }
+
+  /**
+   * Handle browser commands from the UI (takeover, handback, close, click, keypress)
+   */
+  async handleBrowserCommand(sessionId: string, command: BrowserCommand): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      sessionLog.warn(`Cannot handle browser command: session ${sessionId} not found`)
+      return
+    }
+
+    // Create browser instance if it doesn't exist and this is a navigate/launch command
+    if (!managed.browserInstance && (command.type === 'launch' || command.type === 'takeover')) {
+      managed.browserInstance = new BrowserInstance({
+        viewport: command.type === 'launch' && command.viewport
+          ? command.viewport
+          : { width: 1280, height: 720 },
+        headless: false, // Show browser for Manus-like experience
+        screenshotInterval: 200, // 5 FPS streaming
+        onScreenshot: (imageBase64, controlState) => {
+          this.sendEvent({
+            type: 'browser_screenshot',
+            sessionId,
+            imageBase64,
+            controlState,
+          }, managed.workspace.id)
+        },
+        onNavigate: (url, title) => {
+          this.sendEvent({
+            type: 'browser_navigated',
+            sessionId,
+            url,
+            title,
+          }, managed.workspace.id)
+        },
+        onControlChange: (controlState) => {
+          this.sendEvent({
+            type: 'browser_control_changed',
+            sessionId,
+            controlState,
+          }, managed.workspace.id)
+        },
+        onError: (error) => {
+          this.sendEvent({
+            type: 'browser_error',
+            sessionId,
+            error,
+          }, managed.workspace.id)
+        },
+        onClose: () => {
+          this.sendEvent({
+            type: 'browser_closed',
+            sessionId,
+          }, managed.workspace.id)
+          managed.browserInstance = undefined
+        },
+      })
+      await managed.browserInstance.launch()
+    }
+
+    const browser = managed.browserInstance
+    if (!browser) {
+      sessionLog.warn(`Cannot handle browser command: no browser instance for session ${sessionId}`)
+      return
+    }
+
+    switch (command.type) {
+      case 'launch':
+        // Already launched above
+        break
+      case 'close':
+        await browser.close()
+        break
+      case 'takeover':
+        browser.takeoverByUser()
+        break
+      case 'handback':
+        browser.handBackToAgent()
+        break
+      case 'click':
+        if (command.x !== undefined && command.y !== undefined) {
+          await browser.handleUserClick(command.x, command.y)
+        }
+        break
+      case 'keypress':
+        if (command.key) {
+          await browser.handleUserKeypress(command.key, command.modifiers)
+        }
+        break
+      default:
+        sessionLog.warn(`Unknown browser command type: ${(command as BrowserCommand).type}`)
+    }
   }
 }

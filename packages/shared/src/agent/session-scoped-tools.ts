@@ -160,6 +160,67 @@ export interface AuthResult {
 }
 
 /**
+ * Artifact event for Canvas capabilities
+ */
+export interface ArtifactEvent {
+  type: 'created' | 'updated' | 'deleted';
+  artifactId: string;
+  artifact?: unknown;  // Full artifact for created/updated
+  changes?: Partial<unknown>;  // Changes for updated
+}
+
+/**
+ * Browser command types for Manus-like browser control
+ */
+export type BrowserCommandType =
+  | 'navigate'
+  | 'click'
+  | 'type'
+  | 'scroll'
+  | 'screenshot'
+  | 'close'
+  | 'wait'
+  | 'evaluate';
+
+/**
+ * Browser command payload
+ */
+export interface BrowserCommand {
+  type: BrowserCommandType;
+  sessionId: string;
+  // Navigate
+  url?: string;
+  // Click
+  selector?: string;
+  x?: number;
+  y?: number;
+  // Type
+  text?: string;
+  pressEnter?: boolean;
+  // Scroll
+  direction?: 'up' | 'down';
+  amount?: number;
+  // Wait
+  ms?: number;
+  // Evaluate
+  script?: string;
+}
+
+/**
+ * Browser command result
+ */
+export interface BrowserCommandResult {
+  success: boolean;
+  error?: string;
+  // Screenshot result
+  imageBase64?: string;
+  // Navigate result
+  title?: string;
+  // Evaluate result
+  value?: unknown;
+}
+
+/**
  * Callbacks for session-scoped tool operations.
  * These are registered per-session and invoked by tools.
  */
@@ -176,6 +237,17 @@ export interface SessionScopedToolCallbacks {
    * 5. Agent resumes and processes the result
    */
   onAuthRequest?: (request: AuthRequest) => void;
+  /**
+   * Called when an artifact is created/updated/deleted - triggers Canvas UI updates.
+   * Artifacts are rich content objects (HTML apps, documents, spreadsheets) displayed
+   * in the Canvas panel alongside the chat.
+   */
+  onArtifactEvent?: (event: ArtifactEvent) => void;
+  /**
+   * Called when a browser command is executed - triggers browser control via IPC.
+   * Returns promise with command result (success/error, screenshot data, etc.)
+   */
+  onBrowserCommand?: (command: BrowserCommand) => Promise<BrowserCommandResult>;
 }
 
 /**
@@ -1820,6 +1892,738 @@ source_credential_prompt({
 }
 
 // ============================================================
+// Artifact Tools (Canvas Capabilities)
+// ============================================================
+
+/**
+ * Generate a unique artifact ID
+ */
+function generateArtifactId(): string {
+  return `artifact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Artifact type enum for validation
+ */
+const ARTIFACT_TYPES = ['html', 'document', 'spreadsheet', 'code', 'diagram'] as const;
+
+/**
+ * Create a session-scoped create_artifact tool.
+ * Creates rich content artifacts (HTML apps, documents, spreadsheets) for Canvas display.
+ */
+export function createCreateArtifactTool(sessionId: string) {
+  return tool(
+    'create_artifact',
+    `Create a rich content artifact for the Canvas panel.
+
+Artifacts are interactive content displayed alongside the chat. Use this to create:
+
+**HTML Apps** (type: 'html')
+- Interactive web applications with HTML, CSS, and JavaScript
+- React/Vue apps with CDN dependencies
+- Data visualizations with D3, Chart.js
+- Games, calculators, dashboards
+
+**Documents** (type: 'document')
+- Rich text documents in Markdown, HTML, or plain text
+- Reports, summaries, documentation
+
+**Spreadsheets** (type: 'spreadsheet')
+- Tabular data with columns and rows
+- Supports text, number, and formula column types
+- Export-ready data tables
+
+**Code** (type: 'code')
+- Syntax-highlighted code blocks
+- Specify language and optional filename
+
+**Diagrams** (type: 'diagram')
+- Mermaid, SVG, or DOT format diagrams
+- Architecture diagrams, flowcharts, sequence diagrams
+
+The artifact will automatically appear in the Canvas panel next to the chat.
+
+**Example - HTML Counter App:**
+\`\`\`json
+{
+  "type": "html",
+  "title": "Counter App",
+  "content": {
+    "html": "<div id='app'><h1>Counter: <span id='count'>0</span></h1><button onclick='increment()'>+1</button></div>",
+    "css": "#app { text-align: center; font-family: system-ui; } button { font-size: 24px; padding: 10px 20px; }",
+    "js": "let count = 0; function increment() { count++; document.getElementById('count').textContent = count; }"
+  }
+}
+\`\`\``,
+    {
+      type: z.enum(ARTIFACT_TYPES).describe('Type of artifact to create'),
+      title: z.string().describe('Display title for the artifact'),
+      content: z.union([
+        // HTML artifact content
+        z.object({
+          html: z.string().describe('HTML content'),
+          css: z.string().optional().describe('CSS styles'),
+          js: z.string().optional().describe('JavaScript code'),
+          dependencies: z.array(z.string()).optional().describe('CDN URLs for external libraries'),
+        }),
+        // Document artifact content
+        z.object({
+          content: z.string().describe('Document content'),
+          format: z.enum(['markdown', 'html', 'plain']).describe('Content format'),
+        }),
+        // Spreadsheet artifact content
+        z.object({
+          columns: z.array(z.object({
+            id: z.string(),
+            title: z.string(),
+            type: z.enum(['text', 'number', 'formula']),
+            width: z.number().optional(),
+          })).describe('Column definitions'),
+          rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))).describe('Row data'),
+        }),
+        // Code artifact content
+        z.object({
+          code: z.string().describe('Code content'),
+          language: z.string().describe('Programming language'),
+          filename: z.string().optional().describe('Optional filename'),
+        }),
+        // Diagram artifact content
+        z.object({
+          source: z.string().describe('Diagram source code'),
+          format: z.enum(['mermaid', 'svg', 'dot']).describe('Diagram format'),
+        }),
+      ]).describe('Content based on artifact type'),
+    },
+    async (args) => {
+      debug('[create_artifact] Creating artifact:', args.type, args.title);
+
+      const now = Date.now();
+      const artifactId = generateArtifactId();
+
+      // Build the full artifact object
+      const artifact = {
+        id: artifactId,
+        type: args.type,
+        title: args.title,
+        sessionId,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        ...args.content,
+      };
+
+      // Notify UI via callback
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (callbacks?.onArtifactEvent) {
+        callbacks.onArtifactEvent({
+          type: 'created',
+          artifactId,
+          artifact,
+        });
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Created ${args.type} artifact "${args.title}" (ID: ${artifactId}). The artifact is now displayed in the Canvas panel.`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped update_artifact tool.
+ * Updates existing artifacts in the Canvas panel.
+ */
+export function createUpdateArtifactTool(sessionId: string) {
+  return tool(
+    'update_artifact',
+    `Update an existing artifact in the Canvas panel.
+
+Use this to modify artifacts you've created. You can update:
+- The title
+- Any content fields (partial updates supported)
+
+The artifact will be updated in place and the Canvas will refresh.
+
+**Example - Update HTML:**
+\`\`\`json
+{
+  "artifactId": "artifact_123_abc",
+  "content": {
+    "js": "let count = 10; function increment() { count++; document.getElementById('count').textContent = count; }"
+  }
+}
+\`\`\``,
+    {
+      artifactId: z.string().describe('ID of the artifact to update'),
+      title: z.string().optional().describe('New title (optional)'),
+      content: z.record(z.string(), z.unknown()).optional().describe('Content fields to update (merged with existing)'),
+    },
+    async (args) => {
+      debug('[update_artifact] Updating artifact:', args.artifactId);
+
+      const changes: Record<string, unknown> = {
+        updatedAt: Date.now(),
+      };
+
+      if (args.title) {
+        changes.title = args.title;
+      }
+
+      if (args.content) {
+        Object.assign(changes, args.content);
+      }
+
+      // Notify UI via callback
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (callbacks?.onArtifactEvent) {
+        callbacks.onArtifactEvent({
+          type: 'updated',
+          artifactId: args.artifactId,
+          changes,
+        });
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Updated artifact ${args.artifactId}. Changes: ${Object.keys(changes).filter(k => k !== 'updatedAt').join(', ') || 'version bump'}`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+// ============================================================
+// Browser Tools (Manus-like Browser Control)
+// ============================================================
+
+/**
+ * Create a session-scoped browser_navigate tool.
+ * Navigates the browser to a URL.
+ */
+export function createBrowserNavigateTool(sessionId: string) {
+  return tool(
+    'browser_navigate',
+    `Navigate the browser to a URL.
+
+Opens a browser if not already open and navigates to the specified URL.
+Use this for web browsing, research, and interacting with web applications.
+
+**Examples:**
+- Navigate to a documentation site
+- Open a web application to test
+- Browse to a specific page for research
+
+Returns the page title after navigation completes.`,
+    {
+      url: z.string().describe('The URL to navigate to (must be a valid http/https URL)'),
+    },
+    async (args) => {
+      debug('[browser_navigate] Tool called! Navigating to:', args.url);
+      console.log('[browser_navigate] Tool called! Navigating to:', args.url);
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      debug('[browser_navigate] Callbacks:', callbacks ? 'found' : 'not found');
+      debug('[browser_navigate] onBrowserCommand:', callbacks?.onBrowserCommand ? 'available' : 'not available');
+      if (!callbacks?.onBrowserCommand) {
+        debug('[browser_navigate] ERROR: Browser control not available');
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available. This tool requires a UI with browser support.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'navigate',
+        sessionId,
+        url: args.url,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Navigation failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Navigated to ${args.url}${result.title ? ` - "${result.title}"` : ''}`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_click tool.
+ * Clicks an element on the page.
+ */
+export function createBrowserClickTool(sessionId: string) {
+  return tool(
+    'browser_click',
+    `Click on an element in the browser.
+
+You can click by:
+- **CSS selector**: Click the first element matching the selector
+- **Coordinates**: Click at specific x,y position (useful after taking a screenshot)
+
+**Examples:**
+- Click a button: \`{ selector: "button.submit" }\`
+- Click a link: \`{ selector: "a[href='/login']" }\`
+- Click at position: \`{ x: 500, y: 300 }\``,
+    {
+      selector: z.string().optional().describe('CSS selector of element to click'),
+      x: z.number().optional().describe('X coordinate to click (if not using selector)'),
+      y: z.number().optional().describe('Y coordinate to click (if not using selector)'),
+    },
+    async (args) => {
+      debug('[browser_click] Clicking:', args.selector || `(${args.x}, ${args.y})`);
+
+      if (!args.selector && (args.x === undefined || args.y === undefined)) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Must provide either a selector or both x and y coordinates.',
+          }],
+          isError: true,
+        };
+      }
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'click',
+        sessionId,
+        selector: args.selector,
+        x: args.x,
+        y: args.y,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Click failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: args.selector ? `Clicked element: ${args.selector}` : `Clicked at (${args.x}, ${args.y})`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_type tool.
+ * Types text into an input field.
+ */
+export function createBrowserTypeTool(sessionId: string) {
+  return tool(
+    'browser_type',
+    `Type text into an input field in the browser.
+
+Types the specified text. Optionally press Enter after typing (useful for search boxes, forms).
+
+**With selector:** Types into the specified element
+**Without selector:** Types into the currently focused element
+
+**Examples:**
+- Type in search box: \`{ selector: "input[type='search']", text: "query", pressEnter: true }\`
+- Fill a form field: \`{ selector: "#email", text: "user@example.com" }\`
+- Type in focused element: \`{ text: "hello world" }\``,
+    {
+      text: z.string().describe('The text to type'),
+      selector: z.string().optional().describe('CSS selector of input element (types in focused element if omitted)'),
+      pressEnter: z.boolean().optional().describe('Press Enter after typing (default: false)'),
+    },
+    async (args) => {
+      debug('[browser_type] Typing:', args.text.substring(0, 20) + (args.text.length > 20 ? '...' : ''));
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'type',
+        sessionId,
+        selector: args.selector,
+        text: args.text,
+        pressEnter: args.pressEnter,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Type failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Typed "${args.text.substring(0, 30)}${args.text.length > 30 ? '...' : ''}"${args.pressEnter ? ' and pressed Enter' : ''}`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_scroll tool.
+ * Scrolls the page.
+ */
+export function createBrowserScrollTool(sessionId: string) {
+  return tool(
+    'browser_scroll',
+    `Scroll the browser page up or down.
+
+Use this to view content that's not currently visible.
+
+**Direction:**
+- \`up\`: Scroll towards the top of the page
+- \`down\`: Scroll towards the bottom of the page
+
+**Amount:** Pixels to scroll (default: 300)`,
+    {
+      direction: z.enum(['up', 'down']).describe('Direction to scroll'),
+      amount: z.number().optional().describe('Pixels to scroll (default: 300)'),
+    },
+    async (args) => {
+      debug('[browser_scroll] Scrolling:', args.direction, args.amount || 300);
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'scroll',
+        sessionId,
+        direction: args.direction,
+        amount: args.amount,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Scroll failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Scrolled ${args.direction} ${args.amount || 300}px`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_screenshot tool.
+ * Takes a screenshot of the current page.
+ */
+export function createBrowserScreenshotTool(sessionId: string) {
+  return tool(
+    'browser_screenshot',
+    `Take a screenshot of the current browser page.
+
+Captures the visible viewport. Use this to see what's on the page,
+verify UI state, or identify elements to interact with.
+
+The screenshot will be displayed in the browser panel.`,
+    {},
+    async () => {
+      debug('[browser_screenshot] Taking screenshot');
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'screenshot',
+        sessionId,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Screenshot failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      // Return the screenshot as an image content block if available
+      if (result.imageBase64) {
+        return {
+          content: [
+            {
+              type: 'image' as const,
+              data: result.imageBase64,
+              mimeType: 'image/png',
+            },
+            {
+              type: 'text' as const,
+              text: 'Screenshot captured.',
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: 'Screenshot captured (displayed in browser panel).',
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_close tool.
+ * Closes the browser.
+ */
+export function createBrowserCloseTool(sessionId: string) {
+  return tool(
+    'browser_close',
+    `Close the browser.
+
+Closes the browser window. Use this when you're done browsing
+or want to clean up resources.`,
+    {},
+    async () => {
+      debug('[browser_close] Closing browser');
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'close',
+        sessionId,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Close failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: 'Browser closed.',
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_wait tool.
+ * Waits for a specified time.
+ */
+export function createBrowserWaitTool(sessionId: string) {
+  return tool(
+    'browser_wait',
+    `Wait for a specified amount of time.
+
+Use this to wait for:
+- Page content to load
+- Animations to complete
+- Network requests to finish
+
+**Maximum:** 30000ms (30 seconds)`,
+    {
+      ms: z.number().min(100).max(30000).describe('Milliseconds to wait (100-30000)'),
+    },
+    async (args) => {
+      debug('[browser_wait] Waiting:', args.ms, 'ms');
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'wait',
+        sessionId,
+        ms: args.ms,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Wait failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Waited ${args.ms}ms`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+/**
+ * Create a session-scoped browser_evaluate tool.
+ * Executes JavaScript in the browser context.
+ */
+export function createBrowserEvaluateTool(sessionId: string) {
+  return tool(
+    'browser_evaluate',
+    `Execute JavaScript code in the browser page context.
+
+Use this to:
+- Extract data from the page
+- Interact with page JavaScript
+- Manipulate the DOM
+- Call page functions
+
+**Examples:**
+- Get page title: \`{ script: "document.title" }\`
+- Get element text: \`{ script: "document.querySelector('h1').textContent" }\`
+- Click via JS: \`{ script: "document.querySelector('button').click()" }\`
+
+Returns the result of the script evaluation.`,
+    {
+      script: z.string().describe('JavaScript code to execute in the page context'),
+    },
+    async (args) => {
+      debug('[browser_evaluate] Executing script');
+
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onBrowserCommand) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: 'Error: Browser control not available.',
+          }],
+          isError: true,
+        };
+      }
+
+      const result = await callbacks.onBrowserCommand({
+        type: 'evaluate',
+        sessionId,
+        script: args.script,
+      });
+
+      if (!result.success) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Evaluation failed: ${result.error || 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+
+      const valueStr = result.value !== undefined
+        ? JSON.stringify(result.value, null, 2)
+        : 'undefined';
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Script result:\n${valueStr}`,
+        }],
+        isError: false,
+      };
+    }
+  );
+}
+
+// ============================================================
 // Session-Scoped Tools Provider
 // ============================================================
 
@@ -1858,10 +2662,23 @@ export function getSessionScopedTools(sessionId: string, workspaceRootPath: stri
         createSlackOAuthTriggerTool(sessionId, workspaceRootPath),
         createMicrosoftOAuthTriggerTool(sessionId, workspaceRootPath),
         createCredentialPromptTool(sessionId, workspaceRootPath),
+        // Artifact tools (Canvas capabilities)
+        createCreateArtifactTool(sessionId),
+        createUpdateArtifactTool(sessionId),
+        // Browser tools (Manus-like browser control)
+        createBrowserNavigateTool(sessionId),
+        createBrowserClickTool(sessionId),
+        createBrowserTypeTool(sessionId),
+        createBrowserScrollTool(sessionId),
+        createBrowserScreenshotTool(sessionId),
+        createBrowserCloseTool(sessionId),
+        createBrowserWaitTool(sessionId),
+        createBrowserEvaluateTool(sessionId),
       ],
     });
     sessionScopedToolsCache.set(cacheKey, cached);
     debug(`[SessionScopedTools] Created tools provider for session ${sessionId} in workspace ${workspaceRootPath}`);
+    debug(`[SessionScopedTools] Browser tools registered: browser_navigate, browser_click, browser_type, browser_scroll, browser_screenshot, browser_close, browser_wait, browser_evaluate`);
   }
   return cached;
 }

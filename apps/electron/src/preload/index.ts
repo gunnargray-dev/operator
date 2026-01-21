@@ -368,6 +368,10 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
     }
   },
+
+  // Browser control (Manus-like browser automation)
+  browserCommand: (sessionId: string, command: import('../shared/types').BrowserCommand) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BROWSER_COMMAND, sessionId, command),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

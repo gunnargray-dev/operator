@@ -37,6 +37,18 @@ import {
   extractSessionMeta,
   type SessionMeta,
 } from '@/atoms/sessions'
+import {
+  addArtifactAtom,
+  updateArtifactAtom,
+  deleteArtifactAtom,
+} from '@/atoms/artifacts'
+import {
+  updateBrowserScreenshotAtom,
+  updateBrowserNavigationAtom,
+  updateBrowserControlStateAtom,
+  closeBrowserAtom,
+  setBrowserErrorAtom,
+} from '@/atoms/browser'
 import { sourcesAtom } from '@/atoms/sources'
 import { skillsAtom } from '@/atoms/skills'
 import { extractBadges } from '@/lib/mentions'
@@ -451,6 +463,50 @@ export default function App() {
             setTimeout(() => {
               window.electronAPI.sendMessage(effect.sessionId, messageWithSuffix)
             }, 100)
+            break
+          }
+          case 'artifact_created': {
+            // Canvas artifact created - add to artifact atoms
+            console.log('[App] artifact_created:', effect.sessionId, effect.artifact)
+            store.set(addArtifactAtom, effect.sessionId, effect.artifact)
+            break
+          }
+          case 'artifact_updated': {
+            // Canvas artifact updated - update in artifact atoms
+            console.log('[App] artifact_updated:', effect.sessionId, effect.artifactId)
+            store.set(updateArtifactAtom, effect.sessionId, effect.artifactId, effect.changes)
+            break
+          }
+          case 'artifact_deleted': {
+            // Canvas artifact deleted - remove from artifact atoms
+            console.log('[App] artifact_deleted:', effect.sessionId, effect.artifactId)
+            store.set(deleteArtifactAtom, effect.sessionId, effect.artifactId)
+            break
+          }
+          case 'browser_screenshot': {
+            // Browser screenshot - update browser state with new screenshot
+            store.set(updateBrowserScreenshotAtom, effect.sessionId, effect.imageBase64, effect.controlState)
+            break
+          }
+          case 'browser_navigated': {
+            // Browser navigated - update URL and title
+            store.set(updateBrowserNavigationAtom, effect.sessionId, effect.url, effect.title)
+            break
+          }
+          case 'browser_control_changed': {
+            // Browser control state changed (agent/user/idle)
+            store.set(updateBrowserControlStateAtom, effect.sessionId, effect.controlState)
+            break
+          }
+          case 'browser_closed': {
+            // Browser was closed - reset browser state
+            store.set(closeBrowserAtom, effect.sessionId)
+            break
+          }
+          case 'browser_error': {
+            // Browser error - display error in browser panel
+            console.error('[App] browser_error:', effect.sessionId, effect.error)
+            store.set(setBrowserErrorAtom, effect.sessionId, effect.error)
             break
           }
         }

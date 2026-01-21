@@ -8,6 +8,8 @@
 import * as React from 'react'
 import type { RightSidebarPanel } from '../../../shared/types'
 import { SessionMetadataPanel } from '../right-sidebar/SessionMetadataPanel'
+import { ArtifactSelectorPanel } from '../right-sidebar/ArtifactSelectorPanel'
+import { BrowserPanel } from '../right-sidebar/BrowserPanel'
 
 export interface RightSidebarProps {
   /** Current panel configuration */
@@ -41,6 +43,12 @@ export function RightSidebar({ panel, sessionId, closeButton }: RightSidebarProp
           <p className="text-sm">History panel - Coming soon</p>
         </div>
       )
+
+    case 'artifacts':
+      return <ArtifactSelectorPanel sessionId={sessionId} actions={closeButton} />
+
+    case 'browser':
+      return <BrowserPanel sessionId={sessionId} actions={closeButton} />
 
     case 'none':
     default:

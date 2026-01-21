@@ -1218,6 +1218,8 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
   'TodoWrite',                       // Task tracking
   'SubmitPlan',                     // Plan submission
   'LSP',                            // Language server (read-only)
+  'create_artifact',                // Canvas artifacts (in-memory, not filesystem)
+  'update_artifact',                // Canvas artifacts (in-memory, not filesystem)
 ]);
 
 /**

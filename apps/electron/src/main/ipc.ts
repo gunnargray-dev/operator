@@ -1829,4 +1829,9 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Note: Permission mode cycling settings (cyclablePermissionModes) are now workspace-level
   // and managed via WORKSPACE_SETTINGS_GET/UPDATE channels
 
+  // Browser control (Manus-like browser automation)
+  ipcMain.handle(IPC_CHANNELS.BROWSER_COMMAND, async (_event, sessionId: string, command: import('../shared/types').BrowserCommand) => {
+    return sessionManager.handleBrowserCommand(sessionId, command)
+  })
+
 }

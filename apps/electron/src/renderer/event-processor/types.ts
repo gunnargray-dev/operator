@@ -5,7 +5,7 @@
  * All agent events flow through a single pure function for consistent state transitions.
  */
 
-import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, TodoState, AuthRequest } from '../../shared/types'
+import type { Session, Message, PermissionRequest, CredentialRequest, TypedError, PermissionMode, TodoState, AuthRequest, AnyArtifact, BrowserControlState } from '../../shared/types'
 
 /**
  * Streaming state for a session - replaces streamingTextRef
@@ -357,6 +357,80 @@ export interface UsageUpdateEvent {
 }
 
 /**
+ * Artifact created event - Canvas created a new artifact
+ */
+export interface ArtifactCreatedEvent {
+  type: 'artifact_created'
+  sessionId: string
+  artifact: AnyArtifact
+}
+
+/**
+ * Artifact updated event - Canvas updated an existing artifact
+ */
+export interface ArtifactUpdatedEvent {
+  type: 'artifact_updated'
+  sessionId: string
+  artifactId: string
+  changes: Partial<AnyArtifact>
+}
+
+/**
+ * Artifact deleted event - Canvas deleted an artifact
+ */
+export interface ArtifactDeletedEvent {
+  type: 'artifact_deleted'
+  sessionId: string
+  artifactId: string
+}
+
+/**
+ * Browser screenshot event - Live browser preview
+ */
+export interface BrowserScreenshotEvent {
+  type: 'browser_screenshot'
+  sessionId: string
+  imageBase64: string
+  controlState: BrowserControlState
+}
+
+/**
+ * Browser navigated event - Browser navigated to a new URL
+ */
+export interface BrowserNavigatedEvent {
+  type: 'browser_navigated'
+  sessionId: string
+  url: string
+  title?: string
+}
+
+/**
+ * Browser control changed event - Control state changed
+ */
+export interface BrowserControlChangedEvent {
+  type: 'browser_control_changed'
+  sessionId: string
+  controlState: BrowserControlState
+}
+
+/**
+ * Browser closed event - Browser was closed
+ */
+export interface BrowserClosedEvent {
+  type: 'browser_closed'
+  sessionId: string
+}
+
+/**
+ * Browser error event - Browser error occurred
+ */
+export interface BrowserErrorEvent {
+  type: 'browser_error'
+  sessionId: string
+  error: string
+}
+
+/**
  * Union of all agent events
  */
 export type AgentEvent =
@@ -391,6 +465,14 @@ export type AgentEvent =
   | AuthCompletedEvent
   | SourceActivatedEvent
   | UsageUpdateEvent
+  | ArtifactCreatedEvent
+  | ArtifactUpdatedEvent
+  | ArtifactDeletedEvent
+  | BrowserScreenshotEvent
+  | BrowserNavigatedEvent
+  | BrowserControlChangedEvent
+  | BrowserClosedEvent
+  | BrowserErrorEvent
 
 /**
  * Side effects that need to be handled outside the pure processor
@@ -401,6 +483,14 @@ export type Effect =
   | { type: 'generate_title'; sessionId: string; userMessage: string }
   | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode }
   | { type: 'auto_retry'; sessionId: string; originalMessage: string; sourceSlug: string }
+  | { type: 'artifact_created'; sessionId: string; artifact: AnyArtifact }
+  | { type: 'artifact_updated'; sessionId: string; artifactId: string; changes: Partial<AnyArtifact> }
+  | { type: 'artifact_deleted'; sessionId: string; artifactId: string }
+  | { type: 'browser_screenshot'; sessionId: string; imageBase64: string; controlState: BrowserControlState }
+  | { type: 'browser_navigated'; sessionId: string; url: string; title?: string }
+  | { type: 'browser_control_changed'; sessionId: string; controlState: BrowserControlState }
+  | { type: 'browser_closed'; sessionId: string }
+  | { type: 'browser_error'; sessionId: string; error: string }
 
 /**
  * Result of processing an event

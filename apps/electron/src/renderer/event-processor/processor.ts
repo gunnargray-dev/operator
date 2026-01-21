@@ -173,6 +173,93 @@ export function processEvent(
     case 'usage_update':
       return handleUsageUpdate(state, event)
 
+    // Artifact events - Canvas capabilities
+    // These don't modify session state directly, they emit effects
+    // that will be handled by the useEventProcessor hook to update artifact atoms
+    case 'artifact_created':
+      return {
+        state,
+        effects: [{
+          type: 'artifact_created',
+          sessionId: event.sessionId,
+          artifact: event.artifact,
+        }],
+      }
+
+    case 'artifact_updated':
+      return {
+        state,
+        effects: [{
+          type: 'artifact_updated',
+          sessionId: event.sessionId,
+          artifactId: event.artifactId,
+          changes: event.changes,
+        }],
+      }
+
+    case 'artifact_deleted':
+      return {
+        state,
+        effects: [{
+          type: 'artifact_deleted',
+          sessionId: event.sessionId,
+          artifactId: event.artifactId,
+        }],
+      }
+
+    // Browser events - Manus-like browser control
+    // These emit effects to update browser atoms
+    case 'browser_screenshot':
+      return {
+        state,
+        effects: [{
+          type: 'browser_screenshot',
+          sessionId: event.sessionId,
+          imageBase64: event.imageBase64,
+          controlState: event.controlState,
+        }],
+      }
+
+    case 'browser_navigated':
+      return {
+        state,
+        effects: [{
+          type: 'browser_navigated',
+          sessionId: event.sessionId,
+          url: event.url,
+          title: event.title,
+        }],
+      }
+
+    case 'browser_control_changed':
+      return {
+        state,
+        effects: [{
+          type: 'browser_control_changed',
+          sessionId: event.sessionId,
+          controlState: event.controlState,
+        }],
+      }
+
+    case 'browser_closed':
+      return {
+        state,
+        effects: [{
+          type: 'browser_closed',
+          sessionId: event.sessionId,
+        }],
+      }
+
+    case 'browser_error':
+      return {
+        state,
+        effects: [{
+          type: 'browser_error',
+          sessionId: event.sessionId,
+          error: event.error,
+        }],
+      }
+
     default: {
       // Unknown event type - return state unchanged but as new reference
       // to ensure atom sync detects the "change"
