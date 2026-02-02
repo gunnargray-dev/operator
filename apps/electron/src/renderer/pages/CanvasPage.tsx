@@ -68,7 +68,7 @@ const MODEL_H = 72
 const MODEL_OFFSET_Y = -280
 
 const BASE_ORBIT = 480
-const DETAIL_OFFSET = 180
+const DETAIL_OFFSET = 260
 
 /** Initial viewBox */
 const INIT_VB = { x: -200, y: -100, w: 2400, h: 1600 }
@@ -107,7 +107,8 @@ interface ViewBox {
 
 function computeNodePositions(count: number, orbit: number): NodePosition[] {
   if (count === 0) return []
-  const startAngle = -Math.PI / 2
+  // Start from left side to avoid model node above agent
+  const startAngle = Math.PI
   const step = (2 * Math.PI) / count
   return Array.from({ length: count }, (_, i) => {
     const angle = startAngle + i * step
@@ -253,9 +254,6 @@ function ModelNode({
 // ConnectionLine — edge-to-edge with per-line shimmer gradient
 // =============================================================================
 
-/** Unique counter for gradient IDs */
-let lineIdCounter = 0
-
 function ConnectionLine({
   fromCenter,
   fromSize,
@@ -263,7 +261,6 @@ function ConnectionLine({
   toSize,
   isActive,
   isDetail,
-  shimmerT,
 }: {
   fromCenter: { x: number; y: number }
   fromSize: { w: number; h: number }
@@ -271,53 +268,22 @@ function ConnectionLine({
   toSize: { w: number; h: number }
   isActive: boolean
   isDetail?: boolean
-  /** Shimmer progress 0→1 (driven by parent rAF loop) */
-  shimmerT?: number
 }) {
-  const idRef = useRef(`cl-${++lineIdCounter}`)
-  const gradId = idRef.current
-
+  // Add padding so lines stop before the rounded corners of nodes
+  const pad = isDetail ? 8 : 14
   const fromEdge = getRectEdgePoint(
-    fromCenter.x, fromCenter.y, fromSize.w, fromSize.h, toCenter.x, toCenter.y,
+    fromCenter.x, fromCenter.y, fromSize.w + pad, fromSize.h + pad, toCenter.x, toCenter.y,
   )
   const toEdge = getRectEdgePoint(
-    toCenter.x, toCenter.y, toSize.w, toSize.h, fromCenter.x, fromCenter.y,
+    toCenter.x, toCenter.y, toSize.w + pad, toSize.h + pad, fromCenter.x, fromCenter.y,
   )
 
   const dotR = isDetail ? 3 : 5
   const d = `M ${fromEdge.x} ${fromEdge.y} L ${toEdge.x} ${toEdge.y}`
 
-  // Compute shimmer gradient endpoints along the line direction
-  // The bright band occupies ~20% of the line and sweeps from before → after
-  const t = shimmerT ?? 0
-  const lx = toEdge.x - fromEdge.x
-  const ly = toEdge.y - fromEdge.y
-  // Extend range so the band fully enters/exits: -0.3 to 1.3
-  const st = -0.3 + t * 1.6
-  const bandW = 0.2
 
   return (
     <g>
-      {/* Per-line shimmer gradient (only when active) */}
-      {isActive && !isDetail && (
-        <defs>
-          <linearGradient
-            id={gradId}
-            gradientUnits="userSpaceOnUse"
-            x1={String(fromEdge.x)}
-            y1={String(fromEdge.y)}
-            x2={String(toEdge.x)}
-            y2={String(toEdge.y)}
-          >
-            <stop offset={Math.max(0, st)} stopColor="white" stopOpacity="0" />
-            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.3))} stopColor="white" stopOpacity="0.5" />
-            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.5))} stopColor="white" stopOpacity="0.9" />
-            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.7))} stopColor="white" stopOpacity="0.5" />
-            <stop offset={Math.min(1, st + bandW)} stopColor="white" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-      )}
-
       {/* Base line — always visible */}
       <path
         d={d}
@@ -335,15 +301,31 @@ function ConnectionLine({
         strokeLinecap="round"
       />
 
-      {/* Shimmer overlay — gradient follows line direction */}
-      {isActive && !isDetail && (
+      {/* Shimmer: wide soft glow */}
+      {isActive && (
         <path
+          className="shimmer-line"
           d={d}
           fill="none"
-          stroke={`url(#${gradId})`}
-          strokeWidth={4}
+          stroke="white"
+          strokeOpacity={isDetail ? 0.06 : 0.08}
+          strokeWidth={isDetail ? 10 : 16}
           strokeLinecap="round"
+          strokeDasharray="50 200"
           filter="url(#line-glow)"
+        />
+      )}
+      {/* Shimmer: bright core */}
+      {isActive && (
+        <path
+          className="shimmer-line"
+          d={d}
+          fill="none"
+          stroke="white"
+          strokeOpacity={isDetail ? 0.25 : 0.35}
+          strokeWidth={isDetail ? 1.5 : 2}
+          strokeLinecap="round"
+          strokeDasharray="50 200"
         />
       )}
 
@@ -603,22 +585,6 @@ function NodeGraph({
   const isPanning = useRef(false)
   const lastMouse = useRef({ x: 0, y: 0 })
 
-  // Shimmer progress 0→1, driven by rAF for smooth animation
-  const [shimmerT, setShimmerT] = useState(0)
-  const shimmerStart = useRef(0)
-  useEffect(() => {
-    let frame: number
-    const dur = 2000 // ms per sweep
-    const tick = (now: number) => {
-      if (!shimmerStart.current) shimmerStart.current = now
-      const elapsed = (now - shimmerStart.current) % dur
-      setShimmerT(elapsed / dur)
-      frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  }, [])
-
   // Reset view when session changes
   useEffect(() => {
     setVb(INIT_VB)
@@ -722,7 +688,7 @@ function NodeGraph({
         ref={svgRef}
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
         className="w-full h-full"
-        style={{ cursor: 'grab' }}
+        style={{ cursor: 'grab', touchAction: 'none' }}
         preserveAspectRatio="xMidYMid meet"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -744,6 +710,17 @@ function NodeGraph({
           </filter>
         </defs>
 
+        {/* CSS keyframes for shimmer dash animation */}
+        <style>{`
+          @keyframes shimmer-dash {
+            from { stroke-dashoffset: 240; }
+            to   { stroke-dashoffset: -240; }
+          }
+          .shimmer-line {
+            animation: shimmer-dash 2s linear infinite;
+          }
+        `}</style>
+
         {/* Grid background — covers a large area for pan */}
         <rect x="-5000" y="-5000" width="12000" height="12000" fill="url(#dot-grid)" />
 
@@ -753,8 +730,8 @@ function NodeGraph({
           fromSize={modelSize}
           toCenter={agentCenter}
           toSize={agentSize}
-          isActive={!!isProcessing}
-          shimmerT={shimmerT}
+          isActive={true}
+
         />
 
         {/* Connection lines: center -> tool nodes */}
@@ -765,8 +742,8 @@ function NodeGraph({
             fromSize={agentSize}
             toCenter={positions[i]}
             toSize={nodeSize}
-            isActive={node.isActive || node.callCount > 0}
-            shimmerT={shimmerT}
+            isActive={true}
+  
           />
         ))}
 
@@ -780,8 +757,9 @@ function NodeGraph({
               fromSize={nodeSize}
               toCenter={detailPositions[i]}
               toSize={detailSize}
-              isActive={false}
+              isActive={true}
               isDetail
+    
             />
           )
         })}

@@ -24,7 +24,7 @@ import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 // TodoStateIcons no longer used - icons come from dynamic todoStates
 import { SourceAvatar } from "@/components/ui/source-avatar"
-import { AppMenu } from "../AppMenu"
+// AppMenu replaced by top input bar
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { cn, isHexColor } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -56,7 +56,7 @@ import {
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher"
 import { SessionList } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
-import { LeftSidebar } from "./LeftSidebar"
+// LeftSidebar replaced by inline icon rail
 import { useSession } from "@/hooks/useSession"
 import { ensureSessionMessagesLoadedAtom } from "@/atoms/sessions"
 import { AppShellProvider, type AppShellContextType } from "@/context/AppShellContext"
@@ -124,6 +124,7 @@ interface AppShellProps {
  */
 const PANEL_WINDOW_EDGE_SPACING = 6 // Padding between panels and window edge
 const PANEL_PANEL_SPACING = 5 // Gap between adjacent panels
+const SIDEBAR_WIDTH = 180 // Fixed-width sidebar with icons + labels
 
 /**
  * AppShell - Main 3-panel layout container
@@ -184,9 +185,6 @@ function AppShellContent({
   const [isSidebarVisible, setIsSidebarVisible] = React.useState(() => {
     return storage.get(storage.KEYS.sidebarVisible, !defaultCollapsed)
   })
-  const [sidebarWidth, setSidebarWidth] = React.useState(() => {
-    return storage.get(storage.KEYS.sidebarWidth, 220)
-  })
   // Session list width in pixels (min 240, max 480)
   const [sessionListWidth, setSessionListWidth] = React.useState(() => {
     return storage.get(storage.KEYS.sessionListWidth, 300)
@@ -208,15 +206,12 @@ function AppShellContent({
   // Formula: 600px (300px right sidebar + 300px center) + leftSidebar + sessionList
   // This ensures we switch to overlay mode when inline right sidebar would compress content
   const MIN_INLINE_SPACE = 600 // 300px for right sidebar + 300px for center content
-  const leftSidebarEffectiveWidth = isSidebarVisible ? sidebarWidth : 0
-  const OVERLAY_THRESHOLD = MIN_INLINE_SPACE + leftSidebarEffectiveWidth + sessionListWidth
+  const OVERLAY_THRESHOLD = MIN_INLINE_SPACE + SIDEBAR_WIDTH + sessionListWidth
   const shouldUseOverlay = windowWidth < OVERLAY_THRESHOLD
 
-  const [isResizing, setIsResizing] = React.useState<'sidebar' | 'session-list' | 'right-sidebar' | null>(null)
-  const [sidebarHandleY, setSidebarHandleY] = React.useState<number | null>(null)
+  const [isResizing, setIsResizing] = React.useState<'session-list' | 'right-sidebar' | null>(null)
   const [sessionListHandleY, setSessionListHandleY] = React.useState<number | null>(null)
   const [rightSidebarHandleY, setRightSidebarHandleY] = React.useState<number | null>(null)
-  const resizeHandleRef = React.useRef<HTMLDivElement>(null)
   const sessionListHandleRef = React.useRef<HTMLDivElement>(null)
   const rightSidebarHandleRef = React.useRef<HTMLDivElement>(null)
   const [session, setSession] = useSession()
@@ -241,6 +236,7 @@ function AppShellContent({
   // Search state for session list
   const [searchActive, setSearchActive] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState('')
+
 
   // Reset search only when navigator or filter changes (not when selecting sessions)
   const navFilterKey = React.useMemo(() => {
@@ -544,23 +540,14 @@ function AppShellContent({
     if (!isResizing) return
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (isResizing === 'sidebar') {
-        const newWidth = Math.min(Math.max(e.clientX, 180), 320)
-        setSidebarWidth(newWidth)
-        if (resizeHandleRef.current) {
-          const rect = resizeHandleRef.current.getBoundingClientRect()
-          setSidebarHandleY(e.clientY - rect.top)
-        }
-      } else if (isResizing === 'session-list') {
-        const offset = isSidebarVisible ? sidebarWidth : 0
-        const newWidth = Math.min(Math.max(e.clientX - offset, 240), 480)
+      if (isResizing === 'session-list') {
+        const newWidth = Math.min(Math.max(e.clientX - SIDEBAR_WIDTH, 240), 480)
         setSessionListWidth(newWidth)
         if (sessionListHandleRef.current) {
           const rect = sessionListHandleRef.current.getBoundingClientRect()
           setSessionListHandleY(e.clientY - rect.top)
         }
       } else if (isResizing === 'right-sidebar') {
-        // Calculate from right edge
         const newWidth = Math.min(Math.max(window.innerWidth - e.clientX, 280), 480)
         setRightSidebarWidth(newWidth)
         if (rightSidebarHandleRef.current) {
@@ -571,10 +558,7 @@ function AppShellContent({
     }
 
     const handleMouseUp = () => {
-      if (isResizing === 'sidebar') {
-        storage.set(storage.KEYS.sidebarWidth, sidebarWidth)
-        setSidebarHandleY(null)
-      } else if (isResizing === 'session-list') {
+      if (isResizing === 'session-list') {
         storage.set(storage.KEYS.sessionListWidth, sessionListWidth)
         setSessionListHandleY(null)
       } else if (isResizing === 'right-sidebar') {
@@ -591,7 +575,7 @@ function AppShellContent({
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isResizing, sidebarWidth, sessionListWidth, rightSidebarWidth, isSidebarVisible])
+  }, [isResizing, sessionListWidth, rightSidebarWidth])
 
   // Spring transition config - shared between sidebar and header
   // Critical damping (no bounce): damping = 2 * sqrt(stiffness * mass)
@@ -1006,16 +990,16 @@ function AppShellContent({
     if (isSettingsNavigation(navState)) return 'Settings'
 
     // Chats navigator - use chatFilter
-    if (!chatFilter) return 'All Chats'
+    if (!chatFilter) return 'All Tasks'
 
     switch (chatFilter.kind) {
       case 'flagged':
         return 'Flagged'
       case 'state':
         const state = todoStates.find(s => s.id === chatFilter.stateId)
-        return state?.label || 'All Chats'
+        return state?.label || 'All Tasks'
       default:
-        return 'All Chats'
+        return 'All Tasks'
     }
   }, [navState, chatFilter, todoStates])
 
@@ -1031,237 +1015,122 @@ function AppShellContent({
         */}
         <div className="titlebar-drag-region fixed top-0 left-0 right-0 h-[50px] z-titlebar" />
 
-      {/* App Menu - fixed position, always visible (hidden in focused mode) */}
-      {!isFocusedMode && (
-        <div
-          className="fixed left-[86px] top-0 h-[50px] z-overlay flex items-center titlebar-no-drag pr-2"
-          style={{ width: sidebarWidth - 86 }}
-        >
-          <AppMenu
-            onNewChat={() => handleNewChat(true)}
-            onOpenSettings={onOpenSettings}
-            onOpenKeyboardShortcuts={onOpenKeyboardShortcuts}
-            onOpenStoredUserPreferences={onOpenStoredUserPreferences}
-            onReset={onReset}
-            onBack={goBack}
-            onForward={goForward}
-            canGoBack={canGoBack}
-            canGoForward={canGoForward}
-            onToggleSidebar={() => setIsSidebarVisible(prev => !prev)}
-            isSidebarVisible={isSidebarVisible}
-          />
-        </div>
-      )}
-
-      {/* === OUTER LAYOUT: Sidebar | Main Content === */}
+      {/* === OUTER LAYOUT: Icon Rail | Right Column (Search + Panels) === */}
       <div className="h-full flex items-stretch relative">
-        {/* === SIDEBAR (Left) === (hidden in focused mode)
-            Animated width with spring physics for smooth 60-120fps transitions.
-            Uses overflow-hidden to clip content during collapse animation.
-            Resizable via drag handle on right edge (200-400px range). */}
-        {!isFocusedMode && (
-        <motion.div
-          initial={false}
-          animate={{ width: isSidebarVisible ? sidebarWidth : 0 }}
-          transition={isResizing ? { duration: 0 } : springTransition}
-          className="h-full overflow-hidden shrink-0 relative"
-        >
-          <div
-            ref={sidebarRef}
-            style={{ width: sidebarWidth }}
-            className="h-full font-sans relative"
-            data-focus-zone="sidebar"
-            tabIndex={sidebarFocused ? 0 : -1}
-            onKeyDown={handleSidebarKeyDown}
-          >
-            <div className="flex h-full flex-col pt-[50px] select-none">
-              {/* Sidebar Top Section */}
-              <div className="flex-1 flex flex-col min-h-0">
-                {/* New Chat Button - Gmail-style, with context menu for "Open in New Window" */}
-                <div className="px-2 pt-1 pb-2">
-                  <ContextMenu modal={true}>
-                    <ContextMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleNewChat(true)}
-                        className="w-full justify-start gap-2 py-[7px] px-2 text-[13px] font-normal rounded-[6px] shadow-minimal bg-background"
-                        data-tutorial="new-chat-button"
-                      >
-                        <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
-                        New Chat
-                      </Button>
-                    </ContextMenuTrigger>
-                    <StyledContextMenuContent>
-                      <ContextMenuProvider>
-                        <SidebarMenu type="newChat" />
-                      </ContextMenuProvider>
-                    </StyledContextMenuContent>
-                  </ContextMenu>
-                </div>
-                {/* Primary Nav: All Chats (with expandable submenu), Sources */}
-                <LeftSidebar
-                  isCollapsed={false}
-                  getItemProps={getSidebarItemProps}
-                  focusedItemId={focusedSidebarItemId}
-                  links={[
-                    {
-                      id: "nav:allChats",
-                      title: "All Chats",
-                      label: String(workspaceSessionMetas.length),
-                      icon: Inbox,
-                      variant: chatFilter?.kind === 'allChats' ? "default" : "ghost",
-                      onClick: handleAllChatsClick,
-                      expandable: true,
-                      expanded: isExpanded('nav:allChats'),
-                      onToggle: () => toggleExpanded('nav:allChats'),
-                      // Context menu: Configure Statuses
-                      contextMenu: {
-                        type: 'allChats',
-                        onConfigureStatuses: openConfigureStatuses,
-                      },
-                      items: [
-                        // Dynamic status items from todoStates
-                        ...todoStates.map(state => ({
-                          id: `nav:state:${state.id}`,
-                          title: state.label,
-                          label: String(todoStateCounts[state.id] || 0),
-                          icon: state.icon,
-                          iconColor: state.color,
-                          iconColorable: state.iconColorable,
-                          variant: (chatFilter?.kind === 'state' && chatFilter.stateId === state.id ? "default" : "ghost") as "default" | "ghost",
-                          onClick: () => handleTodoStateClick(state.id),
-                          // Context menu for each status: Configure Statuses
-                          contextMenu: {
-                            type: 'status' as const,
-                            statusId: state.id,
-                            onConfigureStatuses: openConfigureStatuses,
-                          },
-                        })),
-                        // Separator before Flagged
-                        { id: "separator:before-flagged", type: "separator" },
-                        // Flagged at the bottom
-                        {
-                          id: "nav:flagged",
-                          title: "Flagged",
-                          label: String(flaggedCount),
-                          icon: <Flag className="h-3.5 w-3.5 fill-current" />,
-                          iconColor: "text-info",
-                          variant: chatFilter?.kind === 'flagged' ? "default" : "ghost",
-                          onClick: handleFlaggedClick,
-                          // Context menu for Flagged: Configure Statuses
-                          contextMenu: {
-                            type: 'flagged' as const,
-                            onConfigureStatuses: openConfigureStatuses,
-                          },
-                        },
-                      ],
-                    },
-                    {
-                      id: "nav:sources",
-                      title: "Sources",
-                      label: String(sources.length),
-                      icon: DatabaseZap,
-                      variant: isSourcesNavigation(navState) ? "default" : "ghost",
-                      onClick: handleSourcesClick,
-                      dataTutorial: "sources-nav",
-                      // Context menu: Add Source
-                      contextMenu: {
-                        type: 'sources',
-                        onAddSource: openAddSource,
-                      },
-                    },
-                    {
-                      id: "nav:skills",
-                      title: "Skills",
-                      label: String(skills.length),
-                      icon: Zap,
-                      variant: isSkillsNavigation(navState) ? "default" : "ghost",
-                      onClick: handleSkillsClick,
-                      // Context menu: Add Skill
-                      contextMenu: {
-                        type: 'skills',
-                        onAddSkill: openAddSkill,
-                      },
-                    },
-                    { id: "separator:skills-canvas", type: "separator" },
-                    {
-                      id: "nav:canvas",
-                      title: "Canvas",
-                      icon: LayoutGrid,
-                      variant: isCanvasNavigation(navState) ? "default" : "ghost",
-                      onClick: () => navigate(routes.view.canvas()),
-                    },
-                    { id: "separator:canvas-settings", type: "separator" },
-                    {
-                      id: "nav:settings",
-                      title: "Settings",
-                      icon: Settings,
-                      variant: isSettingsNavigation(navState) ? "default" : "ghost",
-                      onClick: () => handleSettingsClick('app'),
-                      // No context menu for Settings
-                    },
-                  ]}
-                />
-                {/* Agent Tree: Hierarchical list of agents */}
-                {/* Agents section removed */}
-              </div>
-
-              {/* Sidebar Bottom Section: WorkspaceSwitcher */}
-              <div className="mt-auto shrink-0 py-2 px-2">
-                <WorkspaceSwitcher
-                  isCollapsed={false}
-                  workspaces={workspaces}
-                  activeWorkspaceId={activeWorkspaceId}
-                  onSelect={onSelectWorkspace}
-                  onWorkspaceCreated={() => onRefreshWorkspaces?.()}
-                />
-              </div>
-            </div>
-          </div>
-        </motion.div>
-        )}
-
-        {/* Sidebar Resize Handle (hidden in focused mode) */}
+        {/* === LEFT SIDEBAR === Icons + labels (hidden in focused mode) */}
         {!isFocusedMode && (
         <div
-          ref={resizeHandleRef}
-          onMouseDown={(e) => { e.preventDefault(); setIsResizing('sidebar') }}
-          onMouseMove={(e) => {
-            if (resizeHandleRef.current) {
-              const rect = resizeHandleRef.current.getBoundingClientRect()
-              setSidebarHandleY(e.clientY - rect.top)
-            }
-          }}
-          onMouseLeave={() => { if (!isResizing) setSidebarHandleY(null) }}
-          className="absolute top-0 w-3 h-full cursor-col-resize z-panel flex justify-center"
-          style={{
-            left: isSidebarVisible ? sidebarWidth - 6 : -6,
-            transition: isResizing === 'sidebar' ? undefined : 'left 0.15s ease-out',
-          }}
+          ref={sidebarRef}
+          className="h-full shrink-0 flex flex-col pt-[50px] pb-2 px-2 select-none border-r border-foreground/[0.06]"
+          style={{ width: SIDEBAR_WIDTH }}
+          data-focus-zone="sidebar"
+          tabIndex={sidebarFocused ? 0 : -1}
+          onKeyDown={handleSidebarKeyDown}
         >
-          {/* Visual indicator - 2px wide */}
-          <div
-            className="w-0.5 h-full"
-            style={getResizeGradientStyle(sidebarHandleY)}
-          />
+          {/* Nav items */}
+          <div className="flex-1 flex flex-col gap-0.5 pt-1">
+            {/* New Chat */}
+            <button
+              onClick={() => handleNewChat(true)}
+              data-tutorial="new-chat-button"
+              className="flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg hover:bg-foreground/5 transition-colors"
+            >
+              <SquarePenRounded className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px] text-foreground/70">New Task</span>
+            </button>
+
+            {/* All Chats */}
+            <button
+              onClick={handleAllChatsClick}
+              className={cn(
+                "flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg transition-colors",
+                isChatsNavigation(navState) ? "bg-foreground/[0.07] text-foreground" : "hover:bg-foreground/5 text-foreground/70"
+              )}
+            >
+              <Inbox className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px]">Tasks</span>
+            </button>
+
+            {/* Sources */}
+            <button
+              onClick={handleSourcesClick}
+              data-tutorial="sources-nav"
+              className={cn(
+                "flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg transition-colors",
+                isSourcesNavigation(navState) ? "bg-foreground/[0.07] text-foreground" : "hover:bg-foreground/5 text-foreground/70"
+              )}
+            >
+              <DatabaseZap className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px]">Sources</span>
+            </button>
+
+            {/* Skills */}
+            <button
+              onClick={handleSkillsClick}
+              className={cn(
+                "flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg transition-colors",
+                isSkillsNavigation(navState) ? "bg-foreground/[0.07] text-foreground" : "hover:bg-foreground/5 text-foreground/70"
+              )}
+            >
+              <Zap className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px]">Skills</span>
+            </button>
+
+            {/* Separator */}
+            <div className="h-px bg-foreground/[0.06] my-1.5 mx-1" />
+
+            {/* Canvas */}
+            <button
+              onClick={() => navigate(routes.view.canvas())}
+              className={cn(
+                "flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg transition-colors",
+                isCanvasNavigation(navState) ? "bg-foreground/[0.07] text-foreground" : "hover:bg-foreground/5 text-foreground/70"
+              )}
+            >
+              <LayoutGrid className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px]">Canvas</span>
+            </button>
+          </div>
+
+          {/* Bottom items */}
+          <div className="flex flex-col gap-0.5">
+            {/* Settings */}
+            <button
+              onClick={() => handleSettingsClick('app')}
+              className={cn(
+                "flex items-center gap-2.5 w-full h-8 px-2.5 rounded-lg transition-colors",
+                isSettingsNavigation(navState) ? "bg-foreground/[0.07] text-foreground" : "hover:bg-foreground/5 text-foreground/70"
+              )}
+            >
+              <Settings className="h-[16px] w-[16px] text-foreground/50 shrink-0" />
+              <span className="text-[13px]">Settings</span>
+            </button>
+
+            {/* Workspace Switcher */}
+            <WorkspaceSwitcher
+              isCollapsed={false}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onSelect={onSelectWorkspace}
+              onWorkspaceCreated={() => onRefreshWorkspaces?.()}
+            />
+          </div>
         </div>
         )}
 
-        {/* === MAIN CONTENT (Right) ===
-            Flex layout: Session List | Chat Display */}
+        {/* === MAIN PANELS === */}
         <div
-          className="flex-1 overflow-hidden min-w-0 flex h-full"
-          style={{ padding: PANEL_WINDOW_EDGE_SPACING, gap: PANEL_PANEL_SPACING / 2 }}
+          className="flex-1 overflow-hidden min-w-0 flex"
+          style={{ padding: `${PANEL_WINDOW_EDGE_SPACING}px ${PANEL_WINDOW_EDGE_SPACING}px ${PANEL_WINDOW_EDGE_SPACING}px`, gap: PANEL_PANEL_SPACING / 2 }}
         >
-          {/* === SESSION LIST PANEL === (hidden in focused mode and canvas mode) */}
-          {!isFocusedMode && !isCanvasNavigation(navState) && (
+          {/* === SESSION LIST PANEL === (hidden in focused mode, canvas mode, or when sidebar collapsed) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && isSidebarVisible && (
           <div
             className="h-full flex flex-col min-w-0 bg-background shrink-0 shadow-middle overflow-hidden rounded-l-[14px] rounded-r-[10px]"
             style={{ width: sessionListWidth }}
           >
             <PanelHeader
-              title={isSidebarVisible ? listTitle : undefined}
-              compensateForStoplight={!isSidebarVisible}
+              title={listTitle}
               actions={
                 <>
                   {/* Filter dropdown - allows filtering by todo states (only in All Chats view) */}
@@ -1461,8 +1330,8 @@ function AppShellContent({
           </div>
           )}
 
-          {/* Session List Resize Handle (hidden in focused mode and canvas mode) */}
-          {!isFocusedMode && !isCanvasNavigation(navState) && (
+          {/* Session List Resize Handle (hidden in focused mode, canvas mode, or sidebar collapsed) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && isSidebarVisible && (
           <div
             ref={sessionListHandleRef}
             onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
@@ -1605,7 +1474,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed top-[120px] w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20 }}
+                style={{ left: SIDEBAR_WIDTH + 20 }}
                 aria-hidden="true"
               />
             }
@@ -1621,7 +1490,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed top-[120px] w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20 }}
+                style={{ left: SIDEBAR_WIDTH + 20 }}
                 aria-hidden="true"
               />
             }
@@ -1637,7 +1506,7 @@ function AppShellContent({
             trigger={
               <div
                 className="fixed top-[120px] w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20 }}
+                style={{ left: SIDEBAR_WIDTH + 20 }}
                 aria-hidden="true"
               />
             }
