@@ -121,6 +121,9 @@ export const routes = {
       subpage && subpage !== 'app'
         ? `settings/${subpage}` as const
         : 'settings' as const,
+
+    /** Canvas view - grid of all sessions with activity feed */
+    canvas: () => 'canvas' as const,
   },
 } as const
 

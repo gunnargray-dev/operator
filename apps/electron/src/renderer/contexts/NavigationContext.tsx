@@ -56,6 +56,7 @@ import {
   isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
+  isCanvasNavigation,
   DEFAULT_NAVIGATION_STATE,
 } from '../../shared/types'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
@@ -68,7 +69,7 @@ export type { Route }
 
 // Re-export navigation state types for consumers
 export type { NavigationState, ChatFilter }
-export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation }
+export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isCanvasNavigation }
 
 interface NavigationContextValue {
   /** Navigate to a route */
@@ -378,6 +379,13 @@ export function NavigationProvider({
           setNavigationState(newState)
           return newState
         }
+      }
+
+      // Canvas: no auto-selection needed
+      if (isCanvasNavigation(newState)) {
+        setSession({ selected: null })
+        setNavigationState(newState)
+        return newState
       }
 
       // For chats with explicit session: update session selection

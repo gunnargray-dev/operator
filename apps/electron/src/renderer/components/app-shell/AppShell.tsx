@@ -18,6 +18,7 @@ import {
   DatabaseZap,
   Zap,
   Inbox,
+  LayoutGrid,
 } from "lucide-react"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -82,6 +83,7 @@ import {
   isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
+  isCanvasNavigation,
   type NavigationState,
   type ChatFilter,
 } from "@/contexts/NavigationContext"
@@ -1181,7 +1183,15 @@ function AppShellContent({
                         onAddSkill: openAddSkill,
                       },
                     },
-                    { id: "separator:skills-settings", type: "separator" },
+                    { id: "separator:skills-canvas", type: "separator" },
+                    {
+                      id: "nav:canvas",
+                      title: "Canvas",
+                      icon: LayoutGrid,
+                      variant: isCanvasNavigation(navState) ? "default" : "ghost",
+                      onClick: () => navigate(routes.view.canvas()),
+                    },
+                    { id: "separator:canvas-settings", type: "separator" },
                     {
                       id: "nav:settings",
                       title: "Settings",
@@ -1243,8 +1253,8 @@ function AppShellContent({
           className="flex-1 overflow-hidden min-w-0 flex h-full"
           style={{ padding: PANEL_WINDOW_EDGE_SPACING, gap: PANEL_PANEL_SPACING / 2 }}
         >
-          {/* === SESSION LIST PANEL === (hidden in focused mode) */}
-          {!isFocusedMode && (
+          {/* === SESSION LIST PANEL === (hidden in focused mode and canvas mode) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && (
           <div
             className="h-full flex flex-col min-w-0 bg-background shrink-0 shadow-middle overflow-hidden rounded-l-[14px] rounded-r-[10px]"
             style={{ width: sessionListWidth }}
@@ -1451,8 +1461,8 @@ function AppShellContent({
           </div>
           )}
 
-          {/* Session List Resize Handle (hidden in focused mode) */}
-          {!isFocusedMode && (
+          {/* Session List Resize Handle (hidden in focused mode and canvas mode) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && (
           <div
             ref={sessionListHandleRef}
             onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
@@ -1483,8 +1493,8 @@ function AppShellContent({
             <MainContentPanel isFocusedMode={isFocusedMode} />
           </div>
 
-          {/* Right Sidebar - Inline Mode (≥ 920px) */}
-          {!isFocusedMode && !shouldUseOverlay && (
+          {/* Right Sidebar - Inline Mode (≥ 920px) - hidden in canvas mode (activity feed is built-in) */}
+          {!isFocusedMode && !shouldUseOverlay && !isCanvasNavigation(navState) && (
             <>
               {/* Resize Handle */}
               {isRightSidebarVisible && (
@@ -1540,8 +1550,8 @@ function AppShellContent({
             </>
           )}
 
-          {/* Right Sidebar - Overlay Mode (< 920px) */}
-          {!isFocusedMode && shouldUseOverlay && (
+          {/* Right Sidebar - Overlay Mode (< 920px) - hidden in canvas mode */}
+          {!isFocusedMode && shouldUseOverlay && !isCanvasNavigation(navState) && (
             <AnimatePresence>
               {isRightSidebarVisible && (
                 <>

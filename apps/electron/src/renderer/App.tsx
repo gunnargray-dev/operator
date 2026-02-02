@@ -42,6 +42,7 @@ import {
   updateArtifactAtom,
   deleteArtifactAtom,
 } from '@/atoms/artifacts'
+import { pushActivityEventAtom } from '@/atoms/activity-feed'
 import {
   updateBrowserScreenshotAtom,
   updateBrowserNavigationAtom,
@@ -622,7 +623,58 @@ export default function App() {
       store.set(sessionMetaMapAtom, newMetaMap)
     })
 
-    return cleanup
+    // Forward interesting events to the activity feed
+    const feedCleanup = window.electronAPI.onSessionEvent((event: SessionEvent) => {
+      const feedEventTypes = new Set(['tool_start', 'tool_result', 'complete', 'error', 'typed_error'])
+      if (!feedEventTypes.has(event.type)) return
+
+      const meta = store.get(sessionMetaMapAtom).get(event.sessionId)
+      const sessionName = meta?.name || meta?.preview || 'Untitled'
+
+      let summary: string = event.type
+      let toolDetail: string | undefined
+      if (event.type === 'tool_start' && 'toolName' in event) {
+        const e = event as { toolName: string; toolInput?: Record<string, unknown> }
+        summary = `Using ${e.toolName}`
+        // Extract a useful detail from tool input
+        if (e.toolInput) {
+          const input = e.toolInput
+          toolDetail = (
+            input.query || input.search || input.q ||
+            input.url || input.path || input.file_path || input.filePath ||
+            input.command || input.cmd ||
+            input.prompt || input.message || input.text ||
+            input.pattern || input.description
+          ) as string | undefined
+          if (typeof toolDetail === 'string' && toolDetail.length > 120) {
+            toolDetail = toolDetail.slice(0, 117) + '...'
+          }
+        }
+      } else if (event.type === 'tool_result') {
+        summary = 'Tool completed'
+      } else if (event.type === 'complete') {
+        summary = 'Session completed'
+      } else if (event.type === 'error' || event.type === 'typed_error') {
+        summary = 'Error occurred'
+      }
+
+      store.set(pushActivityEventAtom, {
+        id: crypto.randomUUID(),
+        sessionId: event.sessionId,
+        type: event.type,
+        sessionName,
+        summary,
+        timestamp: Date.now(),
+        toolUseId: 'toolUseId' in event ? (event as { toolUseId: string }).toolUseId : undefined,
+        toolName: 'toolName' in event ? (event as { toolName: string }).toolName : undefined,
+        toolDetail,
+      })
+    })
+
+    return () => {
+      cleanup()
+      feedCleanup()
+    }
   }, [processAgentEvent, windowWorkspaceId, store, updateSessionDirect, showSessionNotification])
 
   // Listen for menu bar events

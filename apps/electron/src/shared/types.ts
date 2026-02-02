@@ -1010,6 +1010,15 @@ export interface SkillsNavigationState {
 }
 
 /**
+ * Canvas navigation state - shows all sessions as cards with activity feed
+ */
+export interface CanvasNavigationState {
+  navigator: 'canvas'
+  /** Optional right sidebar panel state */
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all 3 panels
  *
  * From this state we can derive:
@@ -1022,6 +1031,7 @@ export type NavigationState =
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
+  | CanvasNavigationState
 
 /**
  * Type guard to check if state is chats navigation
@@ -1052,6 +1062,13 @@ export const isSkillsNavigation = (
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
 /**
+ * Type guard to check if state is canvas navigation
+ */
+export const isCanvasNavigation = (
+  state: NavigationState
+): state is CanvasNavigationState => state.navigator === 'canvas'
+
+/**
  * Default navigation state - allChats with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1079,6 +1096,9 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'settings') {
     return `settings:${state.subpage}`
   }
+  if (state.navigator === 'canvas') {
+    return 'canvas'
+  }
   // Chats
   const f = state.filter
   let base: string
@@ -1104,6 +1124,9 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     }
     return { navigator: 'sources', details: null }
   }
+
+  // Handle canvas
+  if (key === 'canvas') return { navigator: 'canvas' }
 
   // Handle skills
   if (key === 'skills') return { navigator: 'skills', details: null }
