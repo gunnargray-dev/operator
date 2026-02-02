@@ -12,12 +12,8 @@ import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { motion } from 'motion/react'
 import { formatDistanceToNow } from 'date-fns'
 import {
-  CheckCircle2,
-  XCircle,
   Wrench,
-  MessageSquare,
   AlertCircle,
-  Zap,
   Bot,
   Globe,
   FileText,
@@ -25,6 +21,7 @@ import {
   Monitor,
   Database,
   Sparkles,
+  Clock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
@@ -253,8 +250,11 @@ function ModelNode({
 }
 
 // =============================================================================
-// ConnectionLine — solid edge-to-edge with endpoint dots
+// ConnectionLine — edge-to-edge with per-line shimmer gradient
 // =============================================================================
+
+/** Unique counter for gradient IDs */
+let lineIdCounter = 0
 
 function ConnectionLine({
   fromCenter,
@@ -263,6 +263,7 @@ function ConnectionLine({
   toSize,
   isActive,
   isDetail,
+  shimmerT,
 }: {
   fromCenter: { x: number; y: number }
   fromSize: { w: number; h: number }
@@ -270,46 +271,81 @@ function ConnectionLine({
   toSize: { w: number; h: number }
   isActive: boolean
   isDetail?: boolean
+  /** Shimmer progress 0→1 (driven by parent rAF loop) */
+  shimmerT?: number
 }) {
+  const idRef = useRef(`cl-${++lineIdCounter}`)
+  const gradId = idRef.current
+
   const fromEdge = getRectEdgePoint(
-    fromCenter.x,
-    fromCenter.y,
-    fromSize.w,
-    fromSize.h,
-    toCenter.x,
-    toCenter.y,
+    fromCenter.x, fromCenter.y, fromSize.w, fromSize.h, toCenter.x, toCenter.y,
   )
   const toEdge = getRectEdgePoint(
-    toCenter.x,
-    toCenter.y,
-    toSize.w,
-    toSize.h,
-    fromCenter.x,
-    fromCenter.y,
+    toCenter.x, toCenter.y, toSize.w, toSize.h, fromCenter.x, fromCenter.y,
   )
 
-  const dotR = isDetail ? 3 : 4.5
+  const dotR = isDetail ? 3 : 5
+  const d = `M ${fromEdge.x} ${fromEdge.y} L ${toEdge.x} ${toEdge.y}`
+
+  // Compute shimmer gradient endpoints along the line direction
+  // The bright band occupies ~20% of the line and sweeps from before → after
+  const t = shimmerT ?? 0
+  const lx = toEdge.x - fromEdge.x
+  const ly = toEdge.y - fromEdge.y
+  // Extend range so the band fully enters/exits: -0.3 to 1.3
+  const st = -0.3 + t * 1.6
+  const bandW = 0.2
 
   return (
     <g>
-      {/* Main line */}
-      <line
-        x1={fromEdge.x}
-        y1={fromEdge.y}
-        x2={toEdge.x}
-        y2={toEdge.y}
+      {/* Per-line shimmer gradient (only when active) */}
+      {isActive && !isDetail && (
+        <defs>
+          <linearGradient
+            id={gradId}
+            gradientUnits="userSpaceOnUse"
+            x1={String(fromEdge.x)}
+            y1={String(fromEdge.y)}
+            x2={String(toEdge.x)}
+            y2={String(toEdge.y)}
+          >
+            <stop offset={Math.max(0, st)} stopColor="white" stopOpacity="0" />
+            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.3))} stopColor="white" stopOpacity="0.5" />
+            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.5))} stopColor="white" stopOpacity="0.9" />
+            <stop offset={Math.max(0, Math.min(1, st + bandW * 0.7))} stopColor="white" stopOpacity="0.5" />
+            <stop offset={Math.min(1, st + bandW)} stopColor="white" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      )}
+
+      {/* Base line — always visible */}
+      <path
+        d={d}
+        fill="none"
         stroke="currentColor"
         className={
           isDetail
-            ? 'text-foreground/8'
+            ? 'text-foreground/10'
             : isActive
-              ? 'text-accent'
+              ? 'text-accent/40'
               : 'text-foreground/15'
         }
         strokeWidth={isDetail ? 1.5 : 2.5}
-        strokeDasharray={isDetail ? '6 5' : 'none'}
-        filter={isActive && !isDetail ? 'url(#line-glow)' : undefined}
+        strokeDasharray={isActive ? undefined : '8 6'}
+        strokeLinecap="round"
       />
+
+      {/* Shimmer overlay — gradient follows line direction */}
+      {isActive && !isDetail && (
+        <path
+          d={d}
+          fill="none"
+          stroke={`url(#${gradId})`}
+          strokeWidth={4}
+          strokeLinecap="round"
+          filter="url(#line-glow)"
+        />
+      )}
 
       {/* Endpoint dots */}
       {!isDetail && (
@@ -567,6 +603,22 @@ function NodeGraph({
   const isPanning = useRef(false)
   const lastMouse = useRef({ x: 0, y: 0 })
 
+  // Shimmer progress 0→1, driven by rAF for smooth animation
+  const [shimmerT, setShimmerT] = useState(0)
+  const shimmerStart = useRef(0)
+  useEffect(() => {
+    let frame: number
+    const dur = 2000 // ms per sweep
+    const tick = (now: number) => {
+      if (!shimmerStart.current) shimmerStart.current = now
+      const elapsed = (now - shimmerStart.current) % dur
+      setShimmerT(elapsed / dur)
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
   // Reset view when session changes
   useEffect(() => {
     setVb(INIT_VB)
@@ -678,6 +730,11 @@ function NodeGraph({
         onMouseLeave={handleMouseUp}
       >
         <defs>
+          {/* Dotted grid pattern */}
+          <pattern id="dot-grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+            <circle cx="20" cy="20" r="1.5" fill="currentColor" className="text-foreground/8" />
+          </pattern>
+
           <filter id="line-glow">
             <feGaussianBlur stdDeviation="4" result="blur" />
             <feMerge>
@@ -687,6 +744,9 @@ function NodeGraph({
           </filter>
         </defs>
 
+        {/* Grid background — covers a large area for pan */}
+        <rect x="-5000" y="-5000" width="12000" height="12000" fill="url(#dot-grid)" />
+
         {/* Connection line: model -> agent */}
         <ConnectionLine
           fromCenter={modelCenter}
@@ -694,6 +754,7 @@ function NodeGraph({
           toCenter={agentCenter}
           toSize={agentSize}
           isActive={!!isProcessing}
+          shimmerT={shimmerT}
         />
 
         {/* Connection lines: center -> tool nodes */}
@@ -705,6 +766,7 @@ function NodeGraph({
             toCenter={positions[i]}
             toSize={nodeSize}
             isActive={node.isActive || node.callCount > 0}
+            shimmerT={shimmerT}
           />
         ))}
 
@@ -758,65 +820,87 @@ function NodeGraph({
 }
 
 // =============================================================================
-// Activity Feed
+// Session Card — unified card for the sidebar
 // =============================================================================
 
-function getEventIcon(type: string) {
-  switch (type) {
-    case 'tool_start':
-    case 'tool_result':
-      return <Wrench className="h-3 w-3" />
-    case 'complete':
-      return <CheckCircle2 className="h-3 w-3 text-success" />
-    case 'error':
-    case 'typed_error':
-      return <XCircle className="h-3 w-3 text-destructive" />
-    case 'text_complete':
-      return <MessageSquare className="h-3 w-3" />
-    default:
-      return <Zap className="h-3 w-3" />
-  }
-}
-
-function ActivityFeedItem({
-  event,
+function SessionCard({
+  meta,
   isSelected,
-  onClickSession,
+  recentEvents,
+  onClick,
 }: {
-  event: ActivityFeedEvent
+  meta: SessionMeta
   isSelected: boolean
-  onClickSession: () => void
+  recentEvents: ActivityFeedEvent[]
+  onClick: () => void
 }) {
-  const timeAgo = formatDistanceToNow(new Date(event.timestamp), {
-    addSuffix: true,
-  })
+  const title = meta.name || meta.preview || 'Untitled'
+  const timeAgo = meta.lastMessageAt
+    ? formatDistanceToNow(new Date(meta.lastMessageAt), { addSuffix: false })
+    : null
+  const errorCount = recentEvents.filter(
+    (e) => e.type === 'error' || e.type === 'typed_error',
+  ).length
+  const lastEvent = recentEvents[0]
 
   return (
-    <div
+    <button
+      onClick={onClick}
       className={cn(
-        'flex gap-2.5 px-3 py-2 hover:bg-foreground/5 rounded-md transition-colors',
-        isSelected && 'bg-accent/5',
+        'w-full text-left rounded-lg border p-3 transition-colors',
+        isSelected
+          ? 'border-accent/30 bg-accent/5'
+          : 'border-foreground/8 bg-foreground/[0.02] hover:border-foreground/15 hover:bg-foreground/[0.04]',
       )}
     >
-      <span className="shrink-0 mt-0.5">{getEventIcon(event.type)}</span>
-      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-        <button
-          onClick={onClickSession}
-          className="text-[12px] font-medium text-accent hover:underline text-left truncate"
-        >
-          {event.sessionName}
-        </button>
-        <span className="text-[11px] text-foreground/60 truncate">
-          {event.summary}
-        </span>
-        {event.toolDetail && (
-          <span className="text-[10px] text-foreground/35 truncate italic">
-            {event.toolDetail}
+      {/* Status + source badges */}
+      <div className="flex items-center gap-1.5 mb-2">
+        {meta.isProcessing ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+            ACTIVE
+          </span>
+        ) : (
+          <span className="text-[10px] font-medium text-foreground/40 bg-foreground/5 rounded px-1.5 py-0.5">
+            COMPLETED
           </span>
         )}
-        <span className="text-[10px] text-foreground/30">{timeAgo}</span>
       </div>
-    </div>
+
+      {/* Session name */}
+      <p className="text-[13px] font-medium text-foreground leading-snug line-clamp-2 mb-2">
+        {title}
+      </p>
+
+      {/* Last activity line */}
+      {lastEvent && (
+        <p className="text-[11px] text-foreground/40 truncate mb-2">
+          {lastEvent.summary}
+          {lastEvent.toolDetail && (
+            <span className="text-foreground/30 italic">
+              {' — '}
+              {lastEvent.toolDetail}
+            </span>
+          )}
+        </p>
+      )}
+
+      {/* Footer: time + errors */}
+      <div className="flex items-center gap-3 pt-1.5 border-t border-foreground/5">
+        {timeAgo && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-foreground/35">
+            <Clock className="h-3 w-3" />
+            {timeAgo}
+          </span>
+        )}
+        {errorCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-destructive">
+            <AlertCircle className="h-3 w-3" />
+            {errorCount} error{errorCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+    </button>
   )
 }
 
@@ -1004,83 +1088,93 @@ export default function CanvasPage() {
           <NodeGraph session={selectedSession} nodes={graphNodes} model={fullSession?.model} />
         </div>
 
-        {/* Right: Session list + Activity Feed */}
+        {/* Right: Unified activity sidebar */}
         <div className="w-[320px] shrink-0 flex flex-col border-l border-foreground/5 bg-background">
-          {/* Session list */}
-          <div className="border-b border-foreground/5">
-            <div className="px-3 py-2 border-b border-foreground/5">
-              <span className="text-[11px] text-foreground/40 uppercase tracking-wider">
-                Sessions
-              </span>
-            </div>
-            <ScrollArea className="max-h-[200px]">
-              {sessionIds.length === 0 ? (
-                <div className="px-3 py-4 text-[12px] text-foreground/30 text-center">
-                  No sessions
-                </div>
-              ) : (
-                <div className="py-1">
-                  {sessionIds.slice(0, 30).map((id) => {
-                    const meta = sessionMetaMap.get(id)
-                    if (!meta) return null
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => setSelectedSessionId(id)}
-                        className={cn(
-                          'w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] truncate',
-                          'hover:bg-foreground/5 transition-colors',
-                          selectedSessionId === id &&
-                            'bg-accent/5 text-accent font-medium',
-                        )}
-                      >
-                        {meta.isProcessing && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse shrink-0" />
-                        )}
-                        <span className="truncate">
-                          {meta.name || meta.preview || 'Untitled'}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-foreground/5">
+            <div className="flex items-center gap-2">
+              {activeSessions.length > 0 && (
+                <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
               )}
-            </ScrollArea>
+              <span className="text-[14px] font-semibold">Activity</span>
+            </div>
           </div>
 
-          {/* Activity feed */}
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="px-3 py-2.5 border-b border-foreground/5">
-              <div className="flex items-center gap-2">
-                {activeSessions.length > 0 && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                )}
-                <span className="text-[13px] font-medium">Activity</span>
-              </div>
-            </div>
-
-            <ScrollArea className="flex-1">
-              {activityFeed.length === 0 ? (
+          <ScrollArea className="flex-1">
+            <div className="px-3 py-3 flex flex-col gap-4">
+              {sessionIds.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-foreground/30 gap-2">
                   <AlertCircle className="h-5 w-5" />
-                  <span className="text-[12px]">No activity yet</span>
+                  <span className="text-[12px]">No sessions yet</span>
                 </div>
               ) : (
-                <div className="flex flex-col py-1">
-                  {activityFeed.map((event) => (
-                    <ActivityFeedItem
-                      key={event.id}
-                      event={event}
-                      isSelected={event.sessionId === selectedSessionId}
-                      onClickSession={() =>
-                        setSelectedSessionId(event.sessionId)
-                      }
-                    />
-                  ))}
-                </div>
+                <>
+                  {/* Active Sessions */}
+                  {activeSessions.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2 px-1">
+                        <span className="text-[11px] text-foreground/40 uppercase tracking-wider font-medium">
+                          Active Sessions
+                        </span>
+                        <span className="text-[11px] text-foreground/30 bg-foreground/5 rounded-full px-2 py-0.5">
+                          {activeSessions.length}
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {activeSessions.map((meta) => (
+                          <SessionCard
+                            key={meta.id}
+                            meta={meta}
+                            isSelected={selectedSessionId === meta.id}
+                            recentEvents={activityFeed
+                              .filter((e) => e.sessionId === meta.id)
+                              .slice(0, 5)}
+                            onClick={() => setSelectedSessionId(meta.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent Sessions */}
+                  {(() => {
+                    const recentSessions = sessionIds
+                      .map((id) => sessionMetaMap.get(id))
+                      .filter(
+                        (m): m is SessionMeta => !!m && !m.isProcessing,
+                      )
+                      .slice(0, 20)
+                    if (recentSessions.length === 0) return null
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2 px-1">
+                          <span className="text-[11px] text-foreground/40 uppercase tracking-wider font-medium">
+                            Recent
+                          </span>
+                          <span className="text-[11px] text-foreground/30 bg-foreground/5 rounded-full px-2 py-0.5">
+                            {recentSessions.length}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          {recentSessions.map((meta) => (
+                            <SessionCard
+                              key={meta.id}
+                              meta={meta}
+                              isSelected={selectedSessionId === meta.id}
+                              recentEvents={activityFeed
+                                .filter((e) => e.sessionId === meta.id)
+                                .slice(0, 5)}
+                              onClick={() => setSelectedSessionId(meta.id)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </>
               )}
-            </ScrollArea>
-          </div>
+            </div>
+          </ScrollArea>
         </div>
       </div>
     </div>
