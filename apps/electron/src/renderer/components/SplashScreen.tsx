@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { CraftAgentsSymbol } from './icons/CraftAgentsSymbol'
+import appIcon from '@/assets/pplx-icon.png'
 
 interface SplashScreenProps {
   isExiting: boolean
@@ -7,10 +7,10 @@ interface SplashScreenProps {
 }
 
 /**
- * SplashScreen - Shows Craft symbol during app initialization
+ * SplashScreen - Shows Perplexity icon during app initialization
  *
- * Displays centered symbol on app background, fades out when app is fully ready.
- * On exit, the symbol scales up and fades out quickly while the background fades slower.
+ * Displays centered icon on app background, fades out when app is fully ready.
+ * On exit, the icon scales up and fades out quickly while the background fades slower.
  */
 export function SplashScreen({ isExiting, onExitComplete }: SplashScreenProps) {
   return (
@@ -36,7 +36,7 @@ export function SplashScreen({ isExiting, onExitComplete }: SplashScreenProps) {
           ease: [0.16, 1, 0.3, 1] // Exponential out curve
         }}
       >
-        <CraftAgentsSymbol className="h-8 text-accent" />
+        <img src={appIcon} alt="Perplexity" className="h-8 w-8 rounded-lg" />
       </motion.div>
     </motion.div>
   )

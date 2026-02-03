@@ -47,6 +47,13 @@ export interface SessionMeta {
   isFavorited?: boolean
   /** Project folder ID */
   projectId?: string
+  /** Token usage for this session */
+  tokenUsage?: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    costUsd: number
+  }
 }
 
 /**
@@ -90,6 +97,12 @@ export function extractSessionMeta(session: Session): SessionMeta {
     scheduleConfig: session.scheduleConfig,
     isFavorited: session.isFavorited,
     projectId: session.projectId,
+    tokenUsage: session.tokenUsage ? {
+      inputTokens: session.tokenUsage.inputTokens,
+      outputTokens: session.tokenUsage.outputTokens,
+      totalTokens: session.tokenUsage.totalTokens,
+      costUsd: session.tokenUsage.costUsd,
+    } : undefined,
   }
 }
 
@@ -149,8 +162,14 @@ export const updateSessionAtom = atom(
     if (newSession) {
       const metaMap = get(sessionMetaMapAtom)
       const newMetaMap = new Map(metaMap)
-      newMetaMap.set(sessionId, extractSessionMeta(newSession))
+      const meta = extractSessionMeta(newSession)
+      newMetaMap.set(sessionId, meta)
       set(sessionMetaMapAtom, newMetaMap)
+
+      // Debug: log isProcessing updates
+      if (currentSession?.isProcessing !== newSession.isProcessing) {
+        console.log(`[updateSessionAtom] session=${sessionId.slice(-10)}, isProcessing: ${currentSession?.isProcessing} → ${newSession.isProcessing}`)
+      }
     }
   }
 )

@@ -569,30 +569,32 @@ export default function App() {
         // Update atom directly (UI sees update immediately)
         updateSessionDirect(sessionId, () => updatedSession)
 
+        // Debug: log isProcessing changes in streaming branch
+        if (event.type === 'user_message' || event.type === 'complete' || event.type === 'error') {
+          console.log(`[App:streaming] ${event.type}: session=${sessionId.slice(-10)}, isProcessing=${updatedSession.isProcessing}, isHandoff=${isHandoff}`)
+        }
+
         // Handle side effects
         handleEffects(effects, sessionId, event.type)
 
         // Handle background task events
         handleBackgroundTaskEvent(store, sessionId, event, agentEvent)
 
-        // For handoff events, update metadata map for list display
-        // NOTE: No sessionsAtom to sync - atom and metadata are the source of truth
-        if (isHandoff) {
-          // Update metadata map
-          const metaMap = store.get(sessionMetaMapAtom)
-          const newMetaMap = new Map(metaMap)
-          newMetaMap.set(sessionId, extractSessionMeta(updatedSession))
-          store.set(sessionMetaMapAtom, newMetaMap)
+        // Always update metadata map to ensure UI reflects current state
+        // This is especially important for isProcessing changes
+        const metaMap = store.get(sessionMetaMapAtom)
+        const newMetaMap = new Map(metaMap)
+        newMetaMap.set(sessionId, extractSessionMeta(updatedSession))
+        store.set(sessionMetaMapAtom, newMetaMap)
 
-          // Show notification on complete (when window is not focused)
-          if (event.type === 'complete') {
-            // Get the last assistant message as preview
-            const lastMessage = updatedSession.messages.findLast(
-              m => m.role === 'assistant' && !m.isIntermediate
-            )
-            const preview = lastMessage?.content?.substring(0, 100) || undefined
-            showSessionNotification(updatedSession, preview)
-          }
+        // For handoff events, also show notification
+        if (isHandoff && event.type === 'complete') {
+          // Get the last assistant message as preview
+          const lastMessage = updatedSession.messages.findLast(
+            m => m.role === 'assistant' && !m.isIntermediate
+          )
+          const preview = lastMessage?.content?.substring(0, 100) || undefined
+          showSessionNotification(updatedSession, preview)
         }
 
         return
@@ -615,6 +617,11 @@ export default function App() {
 
       // Update per-session atom
       updateSessionDirect(sessionId, () => updatedSession)
+
+      // Debug: log isProcessing changes
+      if (event.type === 'user_message' || event.type === 'complete' || event.type === 'error') {
+        console.log(`[App] ${event.type}: session=${sessionId.slice(-10)}, isProcessing=${updatedSession.isProcessing}`)
+      }
 
       // Update metadata map
       const metaMap = store.get(sessionMetaMapAtom)

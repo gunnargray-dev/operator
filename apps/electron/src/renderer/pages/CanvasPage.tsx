@@ -1,9 +1,9 @@
 /**
- * CanvasPage - SVG node graph visualization of session topology
+ * CanvasPage - Activity feed and Board views
  *
- * Shows the selected session as a center agent node connected to its
- * MCP sources and tools via solid lines. Supports zoom (scroll) and
- * pan (click-drag). Activity feed sidebar on the right drives session selection.
+ * Two view modes toggled via header button:
+ * - Activity: Chronological session cards showing recent and active sessions
+ * - Board: Kanban-style grid organized by todo state
  */
 
 import * as React from 'react'
@@ -22,11 +22,14 @@ import {
   Database,
   Sparkles,
   Clock,
+  LayoutGrid,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SourceAvatar } from '@/components/ui/source-avatar'
+import { Button } from '@/components/ui/button'
+import { BoardCard } from '@/components/board/BoardCard'
 import {
   sessionMetaMapAtom,
   sessionIdsAtom,
@@ -39,8 +42,12 @@ import {
   type ActivityFeedEvent,
 } from '@/atoms/activity-feed'
 import { sourcesAtom } from '@/atoms/sources'
+import { useAppShellContext } from '@/context/AppShellContext'
+import { navigate, routes } from '@/lib/navigate'
 import type { SessionMeta } from '@/atoms/sessions'
 import type { LoadedSource } from '../../shared/types'
+
+type ViewMode = 'canvas' | 'board'
 
 // =============================================================================
 // Graph Types & Constants
@@ -863,12 +870,19 @@ function SessionCard({
         </p>
       )}
 
-      {/* Footer: time + errors */}
+      {/* Footer: time + tokens + errors */}
       <div className="flex items-center gap-3 pt-1.5 border-t border-foreground/5">
         {timeAgo && (
           <span className="inline-flex items-center gap-1 text-[10px] text-foreground/35">
             <Clock className="h-3 w-3" />
             {timeAgo}
+          </span>
+        )}
+        {meta.tokenUsage && meta.tokenUsage.totalTokens > 0 && (
+          <span className="text-[10px] text-foreground/35 font-mono">
+            {meta.tokenUsage.totalTokens >= 1000
+              ? `${(meta.tokenUsage.totalTokens / 1000).toFixed(1)}K`
+              : meta.tokenUsage.totalTokens}
           </span>
         )}
         {errorCount > 0 && (
@@ -883,174 +897,296 @@ function SessionCard({
 }
 
 // =============================================================================
-// Canvas Page
+// Board View — Kanban columns by session status
 // =============================================================================
 
-export default function CanvasPage() {
-  const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
-  const sessionIds = useAtomValue(sessionIdsAtom)
-  const activityFeed = useAtomValue(activityFeedAtom)
-  const allSources = useAtomValue(sourcesAtom)
-  const [selectedSessionId, setSelectedSessionId] = useAtom(
-    selectedCanvasSessionIdAtom,
-  )
+// Fixed board columns based on session runtime status
+const BOARD_COLUMNS = [
+  { id: 'scheduled', label: 'Scheduled', color: '#6366f1' },
+  { id: 'running', label: 'Running', color: '#22c55e' },
+  { id: 'complete', label: 'Complete', color: '#64748b' },
+] as const
 
+type BoardColumnId = typeof BOARD_COLUMNS[number]['id']
+
+function getSessionColumn(session: SessionMeta): BoardColumnId {
+  // Running: actively processing (takes priority)
+  if (session.isProcessing) {
+    return 'running'
+  }
+
+  // Scheduled: has a schedule config (recurring task) OR no activity yet
+  if (session.scheduleConfig || !session.lastMessageAt) {
+    return 'scheduled'
+  }
+
+  // Complete: not processing, has activity, no schedule
+  return 'complete'
+}
+
+function BoardView({
+  sessionMetaMap,
+  allSources,
+}: {
+  sessionMetaMap: Map<string, SessionMeta>
+  allSources: LoadedSource[]
+}) {
+  const { activeWorkspaceId } = useAppShellContext()
+
+  // Filter sessions by workspace
+  const workspaceSessions = useMemo(() => {
+    return Array.from(sessionMetaMap.values())
+      .filter(s => s.workspaceId === activeWorkspaceId)
+  }, [sessionMetaMap, activeWorkspaceId])
+
+  // Group sessions by computed column
+  const columnData = useMemo(() => {
+    const groups = new Map<BoardColumnId, SessionMeta[]>()
+    for (const col of BOARD_COLUMNS) {
+      groups.set(col.id, [])
+    }
+
+    // Debug: log sessions with isProcessing=true
+    const processingSessions = workspaceSessions.filter(s => s.isProcessing)
+    if (processingSessions.length > 0) {
+      console.log('[BoardView] Processing sessions:', processingSessions.map(s => ({ id: s.id, name: s.name, isProcessing: s.isProcessing })))
+    }
+
+    for (const session of workspaceSessions) {
+      const columnId = getSessionColumn(session)
+      groups.get(columnId)!.push(session)
+    }
+
+    // Sort each group by lastMessageAt descending
+    for (const [, sessions] of groups) {
+      sessions.sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
+    }
+    return groups
+  }, [workspaceSessions])
+
+  const handleCardClick = useCallback((sessionId: string) => {
+    navigate(routes.view.allChats(sessionId))
+  }, [])
+
+  return (
+    <div className="flex-1 min-h-0 flex gap-3 px-4 pb-4 pt-2 overflow-x-auto">
+      {BOARD_COLUMNS.map(column => (
+        <div
+          key={column.id}
+          className="flex-shrink-0 w-72 h-full flex flex-col bg-foreground/[0.02] rounded-lg border border-foreground/8"
+        >
+          {/* Column header */}
+          <div className="flex-shrink-0 flex items-center justify-between px-3 py-2.5 border-b border-foreground/8">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ backgroundColor: column.color }}
+              />
+              <span className="text-sm font-medium text-foreground">
+                {column.label}
+              </span>
+            </div>
+            <span className="text-xs text-foreground/40 bg-foreground/5 rounded-full px-2 py-0.5">
+              {columnData.get(column.id)?.length || 0}
+            </span>
+          </div>
+
+          {/* Column content - scrollable */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
+            {(columnData.get(column.id) || []).map(session => (
+              <BoardCard
+                key={session.id}
+                session={session}
+                allSources={allSources}
+                onClick={() => handleCardClick(session.id)}
+              />
+            ))}
+            {(columnData.get(column.id)?.length || 0) === 0 && (
+              <div className="flex items-center justify-center py-8 text-foreground/30 text-xs">
+                No tasks
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// =============================================================================
+// Canvas View — Node graph visualization
+// =============================================================================
+
+function CanvasView({
+  selectedSessionId,
+  setSelectedSessionId,
+  sessionMetaMap,
+  activityFeed,
+  allSources,
+}: {
+  selectedSessionId: string | null
+  setSelectedSessionId: (id: string | null) => void
+  sessionMetaMap: Map<string, SessionMeta>
+  activityFeed: ActivityFeedEvent[]
+  allSources: LoadedSource[]
+}) {
   const selectedSession = selectedSessionId
     ? sessionMetaMap.get(selectedSessionId)
     : undefined
-
-  const fullSession = useAtomValue(
-    useMemo(
-      () =>
-        selectedSessionId
-          ? sessionAtomFamily(selectedSessionId)
-          : atom(null),
-      [selectedSessionId],
-    ),
-  )
-
-  const activeSessions = useMemo(
-    () => Array.from(sessionMetaMap.values()).filter((s) => s.isProcessing),
-    [sessionMetaMap],
-  )
-
-  // Auto-select on mount: prefer an active session
-  const hasAutoSelected = useRef(false)
-  useEffect(() => {
-    if (hasAutoSelected.current) return
-    if (sessionIds.length === 0) return
-
-    hasAutoSelected.current = true
-    const activeId = Array.from(sessionMetaMap.values()).find(
-      (s) => s.isProcessing,
-    )?.id
-    setSelectedSessionId(activeId || sessionIds[0])
-  }, [sessionIds, sessionMetaMap, setSelectedSessionId])
-
-  // Trigger lazy-loading of messages for the selected session
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
+  const sessionAtom = selectedSessionId
+    ? sessionAtomFamily(selectedSessionId)
+    : null
+  const fullSession = useAtomValue(sessionAtom ?? atom(null))
+
+  // Load messages when session is selected
   useEffect(() => {
     if (selectedSessionId) {
       ensureMessagesLoaded(selectedSessionId)
     }
   }, [selectedSessionId, ensureMessagesLoaded])
 
-  // Build unified graph nodes from MCP sources + discovered tools + details
-  const graphNodes = useMemo((): GraphNode[] => {
+  // Build graph nodes from activity feed for selected session
+  const graphNodes = useMemo(() => {
     if (!selectedSessionId) return []
 
-    const enabledSlugs = selectedSession?.enabledSourceSlugs || []
-    const sourcesBySlug = new Map<string, LoadedSource>()
-    for (const s of allSources) {
-      if (enabledSlugs.includes(s.config.slug)) {
-        sourcesBySlug.set(s.config.slug, s)
-      }
-    }
+    const sessionEvents = activityFeed.filter(
+      (e) => e.sessionId === selectedSessionId,
+    )
 
-    const toolData = new Map<
+    // Group by tool name
+    const toolMap = new Map<
       string,
-      { active: boolean; count: number; details: NodeDetail[] }
+      { calls: number; isActive: boolean; lastDetail?: string; source?: LoadedSource }
     >()
-    const completedToolIds = new Set<string>()
 
-    for (const event of activityFeed) {
-      if (event.sessionId !== selectedSessionId) continue
-      if (!event.toolName) continue
-
-      const name = event.toolName
-      if (!toolData.has(name)) {
-        toolData.set(name, { active: false, count: 0, details: [] })
-      }
-      const data = toolData.get(name)!
-
-      if (event.type === 'tool_result') {
-        completedToolIds.add(event.toolUseId || name)
-        data.count++
-      } else if (event.type === 'tool_start') {
-        if (!completedToolIds.has(event.toolUseId || name)) {
-          data.active = true
+    for (const event of sessionEvents) {
+      if (event.type === 'tool_use' || event.type === 'tool_result') {
+        const toolName = event.toolName || 'unknown'
+        const existing = toolMap.get(toolName) || {
+          calls: 0,
+          isActive: false,
+          source: undefined,
         }
-        data.count++
-        if (event.toolDetail) {
-          if (!data.details.some((d) => d.text === event.toolDetail)) {
-            data.details.unshift({
-              text: event.toolDetail,
-              timestamp: event.timestamp,
-            })
-            if (data.details.length > 3) data.details.length = 3
-          }
+        existing.calls++
+        if (event.type === 'tool_use') {
+          existing.isActive = true
+          existing.lastDetail = event.toolDetail
         }
+        // Check if this is an MCP tool
+        if (toolName.startsWith('mcp__')) {
+          const serverName = toolName.split('__')[1]
+          existing.source = allSources.find((s) => s.slug === serverName)
+        }
+        toolMap.set(toolName, existing)
       }
     }
 
-    if (fullSession?.messages) {
-      for (const msg of fullSession.messages) {
-        if (msg.toolName && !toolData.has(msg.toolName)) {
-          toolData.set(msg.toolName, { active: false, count: 1, details: [] })
-        }
-      }
-    }
-
-    const nodes: GraphNode[] = []
-    const addedIds = new Set<string>()
-
-    for (const slug of enabledSlugs) {
-      const source = sourcesBySlug.get(slug)
-      if (source) {
-        addedIds.add(slug)
-        let isActive = false
-        let count = 0
-        const details: NodeDetail[] = []
-        for (const [toolName, data] of toolData) {
-          if (toolName.includes(slug)) {
-            if (data.active) isActive = true
-            count += data.count
-            details.push(...data.details)
-          }
-        }
-        nodes.push({
-          id: slug,
-          label: source.config.name,
-          type: 'source',
+    // Also add connected sources that haven't been called yet
+    for (const source of allSources) {
+      const matchingTool = Array.from(toolMap.keys()).find((k) =>
+        k.includes(source.slug),
+      )
+      if (!matchingTool) {
+        toolMap.set(`source:${source.slug}`, {
+          calls: 0,
+          isActive: false,
           source,
-          isActive,
-          callCount: count,
-          details: details.slice(0, 3),
         })
       }
     }
 
-    for (const [toolName, data] of toolData) {
-      const matchesSource = enabledSlugs.some((slug) =>
-        toolName.includes(slug),
-      )
-      if (matchesSource) continue
-      if (addedIds.has(toolName)) continue
-      addedIds.add(toolName)
+    return Array.from(toolMap.entries()).map(([name, data]) => ({
+      id: name,
+      label: data.source?.name || formatToolName(name),
+      type: data.source ? ('source' as const) : ('tool' as const),
+      source: data.source,
+      isActive: data.isActive,
+      details: data.lastDetail ? [{ text: data.lastDetail }] : [],
+      callCount: data.calls,
+    }))
+  }, [selectedSessionId, activityFeed, allSources])
 
-      nodes.push({
-        id: toolName,
-        label: formatToolName(toolName),
-        type: 'tool',
-        isActive: data.active,
-        callCount: data.count,
-        details: data.details.slice(0, 3),
-      })
+  return (
+    <NodeGraph
+      session={selectedSession}
+      nodes={graphNodes}
+      model={fullSession?.model}
+    />
+  )
+}
+
+// =============================================================================
+// Canvas Page — Canvas/Board toggle with persistent Activity feed on right
+// =============================================================================
+
+// Format token count with K/M suffix
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1)}M`
+  }
+  if (count >= 1_000) {
+    return `${(count / 1_000).toFixed(1)}K`
+  }
+  return count.toString()
+}
+
+// Format cost with $ prefix
+function formatCost(cost: number): string {
+  if (cost < 0.01) {
+    return `$${cost.toFixed(4)}`
+  }
+  return `$${cost.toFixed(2)}`
+}
+
+export default function CanvasPage() {
+  const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
+  const sessionIds = useAtomValue(sessionIdsAtom)
+  const activityFeed = useAtomValue(activityFeedAtom)
+  const allSources = useAtomValue(sourcesAtom)
+  const [selectedSessionId, setSelectedSessionId] = useAtom(selectedCanvasSessionIdAtom)
+
+  const [viewMode, setViewMode] = useState<ViewMode>('canvas')
+
+  const activeSessions = useMemo(
+    () => Array.from(sessionMetaMap.values()).filter((s) => s.isProcessing),
+    [sessionMetaMap],
+  )
+
+  // Aggregate token usage across all sessions
+  const totalTokenUsage = useMemo(() => {
+    let inputTokens = 0
+    let outputTokens = 0
+    let totalTokens = 0
+    let costUsd = 0
+
+    for (const session of sessionMetaMap.values()) {
+      if (session.tokenUsage) {
+        inputTokens += session.tokenUsage.inputTokens
+        outputTokens += session.tokenUsage.outputTokens
+        totalTokens += session.tokenUsage.totalTokens
+        costUsd += session.tokenUsage.costUsd
+      }
     }
 
-    return nodes
-  }, [
-    selectedSessionId,
-    selectedSession?.enabledSourceSlugs,
-    allSources,
-    activityFeed,
-    fullSession?.messages,
-  ])
+    return { inputTokens, outputTokens, totalTokens, costUsd }
+  }, [sessionMetaMap])
+
+  // Auto-select first active session if none selected
+  useEffect(() => {
+    if (!selectedSessionId && activeSessions.length > 0) {
+      setSelectedSessionId(activeSessions[0].id)
+    }
+  }, [selectedSessionId, activeSessions, setSelectedSessionId])
+
+  const handleActivityCardClick = useCallback((sessionId: string) => {
+    setSelectedSessionId(sessionId)
+  }, [setSelectedSessionId])
 
   return (
     <div className="flex flex-col h-full">
       <PanelHeader
-        title="Canvas"
+        title="Activity"
         badge={
           activeSessions.length > 0 ? (
             <span className="text-[11px] text-foreground/50">
@@ -1058,56 +1194,106 @@ export default function CanvasPage() {
             </span>
           ) : undefined
         }
+        actions={
+          <div className="flex items-center gap-1 bg-foreground/5 rounded-md p-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('canvas')}
+              className={cn(
+                'h-7 px-2.5 text-xs gap-1.5',
+                viewMode === 'canvas'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-foreground/50 hover:text-foreground hover:bg-transparent'
+              )}
+            >
+              <Bot className="h-3.5 w-3.5" />
+              Canvas
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('board')}
+              className={cn(
+                'h-7 px-2.5 text-xs gap-1.5',
+                viewMode === 'board'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-foreground/50 hover:text-foreground hover:bg-transparent'
+              )}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Board
+            </Button>
+          </div>
+        }
       />
 
-      <div className="flex flex-1 min-h-0">
-        {/* Left: SVG Node Graph */}
-        <div className="flex-1 min-w-0 bg-background">
-          <NodeGraph session={selectedSession} nodes={graphNodes} model={fullSession?.model} />
+      <div className="flex-1 flex min-h-0">
+        {/* Left: Canvas or Board */}
+        <div className="flex-1 min-w-0">
+          {viewMode === 'canvas' ? (
+            <CanvasView
+              selectedSessionId={selectedSessionId}
+              setSelectedSessionId={setSelectedSessionId}
+              sessionMetaMap={sessionMetaMap}
+              activityFeed={activityFeed}
+              allSources={allSources}
+            />
+          ) : (
+            <BoardView
+              sessionMetaMap={sessionMetaMap}
+              allSources={allSources}
+            />
+          )}
         </div>
 
-        {/* Right: Unified activity sidebar */}
-        <div className="w-[320px] shrink-0 flex flex-col border-l border-foreground/5 bg-background">
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-foreground/5">
-            <div className="flex items-center gap-2">
-              {activeSessions.length > 0 && (
-                <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
-              )}
-              <span className="text-[14px] font-semibold">Activity</span>
+        {/* Right: Activity Feed (persistent) */}
+        <div className="w-80 border-l border-foreground/8 flex flex-col">
+          <div className="px-3 py-2.5 border-b border-foreground/8">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-foreground/50 font-medium uppercase tracking-wider">
+                Activity Feed
+              </span>
             </div>
+            {totalTokenUsage.totalTokens > 0 && (
+              <div className="flex items-center justify-between text-foreground/60">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium font-mono">
+                    {formatTokenCount(totalTokenUsage.totalTokens)}
+                  </span>
+                  <span className="text-xs text-foreground/40">tokens</span>
+                </div>
+                <span className="text-sm font-medium font-mono text-foreground/50">
+                  {formatCost(totalTokenUsage.costUsd)}
+                </span>
+              </div>
+            )}
           </div>
-
           <ScrollArea className="flex-1">
-            <div className="px-3 py-3 flex flex-col gap-4">
+            <div className="p-3 flex flex-col gap-2">
               {sessionIds.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-foreground/30 gap-2">
-                  <AlertCircle className="h-5 w-5" />
-                  <span className="text-[12px]">No sessions yet</span>
+                  <Clock className="h-5 w-5" />
+                  <span className="text-xs">No activity yet</span>
                 </div>
               ) : (
                 <>
                   {/* Active Sessions */}
                   {activeSessions.length > 0 && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2 px-1">
-                        <span className="text-[11px] text-foreground/40 uppercase tracking-wider font-medium">
-                          Active Sessions
-                        </span>
-                        <span className="text-[11px] text-foreground/30 bg-foreground/5 rounded-full px-2 py-0.5">
-                          {activeSessions.length}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-2">
+                    <div className="mb-2">
+                      <span className="text-[10px] text-foreground/40 uppercase tracking-wider font-medium px-1">
+                        Active
+                      </span>
+                      <div className="flex flex-col gap-1.5 mt-1.5">
                         {activeSessions.map((meta) => (
                           <SessionCard
                             key={meta.id}
                             meta={meta}
-                            isSelected={selectedSessionId === meta.id}
+                            isSelected={meta.id === selectedSessionId}
                             recentEvents={activityFeed
                               .filter((e) => e.sessionId === meta.id)
-                              .slice(0, 5)}
-                            onClick={() => setSelectedSessionId(meta.id)}
+                              .slice(0, 3)}
+                            onClick={() => handleActivityCardClick(meta.id)}
                           />
                         ))}
                       </div>
@@ -1118,31 +1304,24 @@ export default function CanvasPage() {
                   {(() => {
                     const recentSessions = sessionIds
                       .map((id) => sessionMetaMap.get(id))
-                      .filter(
-                        (m): m is SessionMeta => !!m && !m.isProcessing,
-                      )
+                      .filter((m): m is SessionMeta => !!m && !m.isProcessing)
                       .slice(0, 20)
                     if (recentSessions.length === 0) return null
                     return (
                       <div>
-                        <div className="flex items-center justify-between mb-2 px-1">
-                          <span className="text-[11px] text-foreground/40 uppercase tracking-wider font-medium">
-                            Recent
-                          </span>
-                          <span className="text-[11px] text-foreground/30 bg-foreground/5 rounded-full px-2 py-0.5">
-                            {recentSessions.length}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-2">
+                        <span className="text-[10px] text-foreground/40 uppercase tracking-wider font-medium px-1">
+                          Recent
+                        </span>
+                        <div className="flex flex-col gap-1.5 mt-1.5">
                           {recentSessions.map((meta) => (
                             <SessionCard
                               key={meta.id}
                               meta={meta}
-                              isSelected={selectedSessionId === meta.id}
+                              isSelected={meta.id === selectedSessionId}
                               recentEvents={activityFeed
                                 .filter((e) => e.sessionId === meta.id)
-                                .slice(0, 5)}
-                              onClick={() => setSelectedSessionId(meta.id)}
+                                .slice(0, 3)}
+                              onClick={() => handleActivityCardClick(meta.id)}
                             />
                           ))}
                         </div>

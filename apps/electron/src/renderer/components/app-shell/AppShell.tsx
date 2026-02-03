@@ -1097,7 +1097,7 @@ function AppShellContent({
                     },
                     {
                       id: "nav:canvas",
-                      title: "Canvas",
+                      title: "Activity",
                       icon: LayoutGrid,
                       variant: isCanvasNavigation(navState) ? "default" : "ghost",
                       onClick: () => navigate(routes.view.canvas()),

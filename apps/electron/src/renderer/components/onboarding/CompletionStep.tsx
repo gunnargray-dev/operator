@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@craft-agent/ui"
-import { CraftAgentsSymbol } from "@/components/icons/CraftAgentsSymbol"
+import appIcon from "@/assets/pplx-icon.png"
 import { StepFormLayout } from "./primitives"
 
 interface CompletionStepProps {
@@ -30,8 +30,8 @@ export function CompletionStep({
           <Spinner className="text-2xl text-foreground" />
         </div>
       ) : (
-        <div className="flex size-16 items-center justify-center">
-          <CraftAgentsSymbol className="size-10 text-accent" />
+        <div className="flex items-center justify-center">
+          <img src={appIcon} alt="Perplexity" className="size-16 rounded-2xl" />
         </div>
       )}
       title={isSaving ? 'Setting up...' : "You're all set!"}
