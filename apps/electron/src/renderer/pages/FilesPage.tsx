@@ -221,7 +221,7 @@ export default function FilesPage() {
         title="Files"
         actions={
           <HeaderIconButton
-            icon={RefreshCw}
+            icon={<RefreshCw className="h-4 w-4" />}
             tooltip="Refresh"
             onClick={loadFiles}
           />

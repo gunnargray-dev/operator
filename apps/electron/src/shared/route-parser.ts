@@ -33,7 +33,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas' | 'board' | 'integrations'
+export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas' | 'board' | 'integrations' | 'files'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -55,7 +55,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allChats', 'state', 'project', 'sources', 'skills', 'settings', 'canvas', 'board', 'integrations'
+  'allChats', 'state', 'project', 'sources', 'skills', 'settings', 'canvas', 'board', 'integrations', 'files'
 ]
 
 /**
@@ -143,6 +143,11 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return { navigator: 'integrations' as NavigatorType, details: null }
   }
 
+  // Files navigator
+  if (first === 'files') {
+    return { navigator: 'files' as NavigatorType, details: null }
+  }
+
   // Chats navigator (allChats, state, project)
   let chatFilter: ChatFilter
   let detailsStartIndex: number
@@ -216,6 +221,10 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
 
   if (parsed.navigator === 'integrations') {
     return 'integrations'
+  }
+
+  if (parsed.navigator === 'files') {
+    return 'files'
   }
 
   // Chats navigator
@@ -465,6 +474,11 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'integrations' }
   }
 
+  // Files
+  if (compound.navigator === 'files') {
+    return { navigator: 'files' }
+  }
+
   // Chats
   const filter = compound.chatFilter || { kind: 'allChats' as const }
   if (compound.details) {
@@ -576,6 +590,8 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'board' }
     case 'integrations':
       return { navigator: 'integrations' }
+    case 'files':
+      return { navigator: 'files' }
     default:
       return null
   }
@@ -613,6 +629,10 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
 
   if (state.navigator === 'integrations') {
     return 'integrations'
+  }
+
+  if (state.navigator === 'files') {
+    return 'files'
   }
 
   // Chats
