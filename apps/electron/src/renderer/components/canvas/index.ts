@@ -15,3 +15,6 @@ export type { HtmlPreviewProps } from './HtmlPreview'
 
 export { DocumentEditor } from './DocumentEditor'
 export type { DocumentEditorProps } from './DocumentEditor'
+
+export { ArtifactInlineCard } from './ArtifactInlineCard'
+export type { ArtifactInlineCardProps } from './ArtifactInlineCard'

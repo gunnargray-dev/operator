@@ -194,6 +194,8 @@ interface ManagedSession {
   isAsyncOperationOngoing?: boolean
   // Preview of first user message (for sidebar display fallback)
   preview?: string
+  // Current step/action when processing (e.g., "Searching web...", "Reading files...")
+  currentStep?: string
   // Message queue for handling new messages while processing
   // When a message arrives during processing, we interrupt and queue
   messageQueue: Array<{
@@ -783,6 +785,69 @@ export class SessionManager {
   }
 
   /**
+   * Format tool name for display in session list (e.g., "Read" -> "Reading files...")
+   */
+  private formatToolNameForDisplay(toolName: string): string {
+    // Strip MCP prefix if present (e.g., "mcp__github__search_code" -> "search_code")
+    const baseName = toolName.replace(/^mcp__[^_]+__/, '')
+
+    // Map common tool names to friendly display text
+    const toolDisplayMap: Record<string, string> = {
+      'Read': 'Reading files...',
+      'Write': 'Writing files...',
+      'Edit': 'Editing code...',
+      'Bash': 'Running command...',
+      'Grep': 'Searching code...',
+      'Glob': 'Finding files...',
+      'Task': 'Running agent...',
+      'TaskOutput': 'Getting results...',
+      'WebSearch': 'Searching web...',
+      'WebFetch': 'Fetching page...',
+      'LSP': 'Analyzing code...',
+      'TodoWrite': 'Updating tasks...',
+    }
+
+    if (toolDisplayMap[baseName]) {
+      return toolDisplayMap[baseName]
+    }
+
+    // Default: format the name nicely
+    return baseName
+      .replace(/_/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/\b\w/g, c => c.toUpperCase()) + '...'
+  }
+
+  /**
+   * Broadcast session metadata update to renderer
+   * Used to update currentStep display in session list
+   */
+  private broadcastSessionMetaUpdate(managed: ManagedSession): void {
+    this.sendEvent({
+      type: 'session_meta_update',
+      sessionId: managed.id,
+      meta: {
+        id: managed.id,
+        workspaceId: managed.workspace.id,
+        name: managed.name,
+        preview: managed.preview,
+        lastMessageAt: managed.lastMessageAt,
+        isProcessing: managed.isProcessing,
+        currentStep: managed.currentStep,
+        todoState: managed.todoState,
+        isFavorited: managed.isFavorited,
+        projectId: managed.projectId,
+        tokenUsage: managed.tokenUsage ? {
+          inputTokens: managed.tokenUsage.inputTokens,
+          outputTokens: managed.tokenUsage.outputTokens,
+          totalTokens: managed.tokenUsage.totalTokens,
+          costUsd: managed.tokenUsage.costUsd,
+        } : undefined,
+      },
+    }, managed.workspace.id)
+  }
+
+  /**
    * Run OAuth flow for a given auth request (non-credential types)
    * Called after forceAbort to execute the OAuth flow asynchronously
    */
@@ -1354,11 +1419,15 @@ export class SessionManager {
             sessionLog.info(`Force-aborting after plan submission for session ${managed.id}`)
             managed.agent.forceAbort(AbortReason.PlanSubmitted)
             managed.isProcessing = false
+            managed.currentStep = undefined  // Clear step display
             managed.abortController = undefined
 
             // Clear parent tool tracking (stale entries would corrupt future tracking)
             managed.parentToolStack = []
             managed.toolToParentMap.clear()
+
+            // Broadcast updated meta
+            this.broadcastSessionMetaUpdate(managed)
             managed.pendingTextParent = undefined
 
             // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
@@ -1409,11 +1478,15 @@ export class SessionManager {
           sessionLog.info(`Force-aborting after auth request for session ${managed.id}`)
           managed.agent.forceAbort(AbortReason.AuthRequest)
           managed.isProcessing = false
+          managed.currentStep = undefined  // Clear step display
           managed.abortController = undefined
 
           // Clear parent tool tracking (stale entries would corrupt future tracking)
           managed.parentToolStack = []
           managed.toolToParentMap.clear()
+
+          // Broadcast updated meta
+          this.broadcastSessionMetaUpdate(managed)
           managed.pendingTextParent = undefined
 
           // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
@@ -2558,11 +2631,15 @@ export class SessionManager {
     // Set state immediately - the SDK will send a complete event
     // but since we cleared isProcessing, onProcessingStopped won't be called again
     managed.isProcessing = false
+    managed.currentStep = undefined  // Clear step display
     managed.abortController = undefined
 
     // Clear parent tool tracking (stale entries would corrupt future parent-child tracking)
     managed.parentToolStack = []
     managed.toolToParentMap.clear()
+
+    // Broadcast updated meta
+    this.broadcastSessionMetaUpdate(managed)
     managed.pendingTextParent = undefined
 
     // Only show "Response interrupted" message when user explicitly clicked Stop
@@ -2606,10 +2683,14 @@ export class SessionManager {
 
     // 1. Cleanup state
     managed.isProcessing = false
+    managed.currentStep = undefined  // Clear step display
     managed.abortController = undefined
     managed.parentToolStack = []
     managed.toolToParentMap.clear()
     managed.pendingTextParent = undefined
+
+    // Broadcast updated meta to clear currentStep in UI
+    this.broadcastSessionMetaUpdate(managed)
 
     // 2. Check queue and process or complete
     if (managed.messageQueue.length > 0) {
@@ -3069,6 +3150,10 @@ To view this task's output:
 
         // Send event to renderer on first occurrence OR when input data is updated
         if (shouldSendEvent) {
+          // Update current step for session list display
+          // Use displayName or intent if available, otherwise format the tool name
+          managed.currentStep = event.displayName || event.intent || this.formatToolNameForDisplay(event.toolName)
+
           this.sendEvent({
             type: 'tool_start',
             sessionId,
@@ -3080,6 +3165,9 @@ To view this task's output:
             turnId: event.turnId,
             parentToolUseId,
           }, workspaceId)
+
+          // Broadcast updated session meta with currentStep
+          this.broadcastSessionMetaUpdate(managed)
         }
         break
       }

@@ -74,11 +74,16 @@ const MODEL_W = 180
 const MODEL_H = 72
 const MODEL_OFFSET_Y = -280
 
+/** Output node (positioned below agent) */
+const OUTPUT_W = 340
+const OUTPUT_H = 140
+const OUTPUT_OFFSET_Y = 300
+
 const BASE_ORBIT = 480
 const DETAIL_OFFSET = 260
 
-/** Initial viewBox */
-const INIT_VB = { x: -200, y: -100, w: 2400, h: 1600 }
+/** Initial viewBox - centered on agent node (WCX=1000, WCY=700) */
+const INIT_VB = { x: 400, y: 200, w: 1200, h: 1000 }
 
 interface NodePosition {
   x: number
@@ -238,8 +243,8 @@ function ModelNode({
         )}
         strokeWidth={1.5}
       />
-      <foreignObject x={rx} y={ry} width={MODEL_W} height={MODEL_H}>
-        <div className="flex items-center gap-3 h-full px-3.5">
+      <foreignObject x={rx} y={ry} width={MODEL_W} height={MODEL_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex items-center gap-3 h-full px-3.5" style={{ pointerEvents: 'none' }}>
           <div className="shrink-0 h-9 w-9 rounded-lg bg-info/10 flex items-center justify-center">
             <Sparkles className="h-5 w-5 text-info" />
           </div>
@@ -421,8 +426,8 @@ function AgentNode({
       />
 
       {/* Content */}
-      <foreignObject x={rx} y={ry} width={AGENT_W} height={AGENT_H}>
-        <div className="flex flex-col items-center justify-center h-full gap-2 px-4">
+      <foreignObject x={rx} y={ry} width={AGENT_W} height={AGENT_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex flex-col items-center justify-center h-full gap-2 px-4" style={{ pointerEvents: 'none' }}>
           <div className="h-10 w-10 rounded-lg bg-accent/15 flex items-center justify-center">
             <Bot className="h-6 w-6 text-accent" />
           </div>
@@ -448,10 +453,14 @@ function ToolNode({
   node,
   position,
   index,
+  onClick,
+  isSelected,
 }: {
   node: GraphNode
   position: NodePosition
   index: number
+  onClick?: () => void
+  isSelected?: boolean
 }) {
   const rx = position.x - NODE_W / 2
   const ry = position.y - NODE_H / 2
@@ -466,6 +475,11 @@ function ToolNode({
         damping: 20,
         delay: 0.04 * index,
       }}
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick?.()
+      }}
+      style={{ cursor: onClick ? 'pointer' : 'default' }}
     >
       {/* Node rect */}
       <rect
@@ -475,16 +489,20 @@ function ToolNode({
         height={NODE_H}
         rx={12}
         className={cn(
-          node.isActive
-            ? 'fill-accent/6 stroke-accent/40'
-            : 'fill-background stroke-foreground/12',
+          'transition-colors',
+          isSelected
+            ? 'fill-accent/10 stroke-accent/50'
+            : node.isActive
+              ? 'fill-accent/6 stroke-accent/40'
+              : 'fill-background stroke-foreground/12',
+          onClick && !isSelected && 'hover:stroke-foreground/25',
         )}
-        strokeWidth={1.5}
+        strokeWidth={isSelected ? 2 : 1.5}
       />
 
       {/* Content */}
-      <foreignObject x={rx} y={ry} width={NODE_W} height={NODE_H}>
-        <div className="flex items-center gap-3 h-full px-3.5">
+      <foreignObject x={rx} y={ry} width={NODE_W} height={NODE_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex items-center gap-3 h-full px-3.5" style={{ pointerEvents: 'none' }}>
           <div className="shrink-0 h-10 w-10 rounded-lg bg-foreground/5 flex items-center justify-center">
             {node.source ? (
               <SourceAvatar source={node.source} size="xs" />
@@ -556,11 +574,204 @@ function DetailNode({
         className="fill-foreground/[0.03] stroke-foreground/8"
         strokeWidth={1}
       />
-      <foreignObject x={rx} y={ry} width={DETAIL_W} height={DETAIL_H}>
-        <div className="flex items-center h-full px-3">
+      <foreignObject x={rx} y={ry} width={DETAIL_W} height={DETAIL_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex items-center h-full px-3" style={{ pointerEvents: 'none' }}>
           <span className="text-[11px] text-foreground/45 truncate leading-tight">
             {detail.text}
           </span>
+        </div>
+      </foreignObject>
+    </motion.g>
+  )
+}
+
+// =============================================================================
+// OutputNode — shows assistant response preview below agent
+// =============================================================================
+
+function OutputNode({
+  preview,
+  isProcessing,
+  onClick,
+}: {
+  preview?: string
+  isProcessing?: boolean
+  onClick?: () => void
+}) {
+  const cx = WCX
+  const cy = WCY + OUTPUT_OFFSET_Y
+  const rx = cx - OUTPUT_W / 2
+  const ry = cy - OUTPUT_H / 2
+
+  if (!preview && !isProcessing) return null
+
+  return (
+    <motion.g
+      initial={{ scale: 0, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 180, damping: 20, delay: 0.1 }}
+      onClick={onClick}
+      style={{ cursor: onClick ? 'pointer' : 'default' }}
+    >
+      <rect
+        x={rx}
+        y={ry}
+        width={OUTPUT_W}
+        height={OUTPUT_H}
+        rx={12}
+        className={cn(
+          'transition-colors',
+          isProcessing
+            ? 'fill-success/6 stroke-success/30'
+            : 'fill-background stroke-foreground/15',
+          onClick && 'hover:stroke-accent/40',
+        )}
+        strokeWidth={1.5}
+      />
+      <foreignObject x={rx} y={ry} width={OUTPUT_W} height={OUTPUT_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex flex-col h-full p-4" style={{ pointerEvents: 'none' }}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="shrink-0 h-7 w-7 rounded-lg bg-success/10 flex items-center justify-center">
+              <FileText className="h-4 w-4 text-success" />
+            </div>
+            <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-wider">
+              Response
+            </span>
+            {isProcessing && (
+              <span className="ml-auto flex items-center gap-1.5 text-[10px] text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                Generating...
+              </span>
+            )}
+          </div>
+          {preview ? (
+            <p className="text-[12px] text-foreground/60 leading-relaxed line-clamp-4 flex-1">
+              {preview}
+            </p>
+          ) : (
+            <p className="text-[11px] text-foreground/30 italic">
+              Waiting for response...
+            </p>
+          )}
+        </div>
+      </foreignObject>
+    </motion.g>
+  )
+}
+
+// =============================================================================
+// NodeDetailPopup — shows details when a node is clicked
+// =============================================================================
+
+function NodeDetailPopup({
+  node,
+  position,
+  onClose,
+}: {
+  node: GraphNode
+  position: { x: number; y: number }
+  onClose: () => void
+}) {
+  const popupW = 280
+  const popupH = 160
+  const rx = position.x - popupW / 2
+  const ry = position.y - NODE_H / 2 - popupH - 20 // Position above the node
+
+  return (
+    <motion.g
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.8, opacity: 0 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+    >
+      {/* Backdrop click to close */}
+      <rect
+        x="-5000"
+        y="-5000"
+        width="12000"
+        height="12000"
+        fill="transparent"
+        onClick={onClose}
+        style={{ cursor: 'default' }}
+      />
+
+      {/* Popup container */}
+      <rect
+        x={rx}
+        y={ry}
+        width={popupW}
+        height={popupH}
+        rx={12}
+        className="fill-background stroke-foreground/20"
+        strokeWidth={1}
+        filter="url(#popup-shadow)"
+      />
+
+      {/* Arrow pointing down */}
+      <path
+        d={`M ${position.x - 10} ${ry + popupH} L ${position.x} ${ry + popupH + 12} L ${position.x + 10} ${ry + popupH} Z`}
+        className="fill-background stroke-foreground/20"
+        strokeWidth={1}
+      />
+
+      <foreignObject x={rx} y={ry} width={popupW} height={popupH} style={{ pointerEvents: 'none' }}>
+        <div className="flex flex-col h-full p-4" style={{ pointerEvents: 'none' }}>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              {node.source ? (
+                <SourceAvatar source={node.source} size="xs" />
+              ) : (
+                <div className="h-8 w-8 rounded-lg bg-foreground/5 flex items-center justify-center">
+                  {getToolIconElement(node.id, 'h-4 w-4')}
+                </div>
+              )}
+              <div>
+                <span className="text-[13px] font-medium text-foreground block leading-tight">
+                  {node.label}
+                </span>
+                <span className="text-[10px] text-foreground/40">
+                  {node.type === 'source' ? 'MCP Server' : 'Tool'}
+                </span>
+              </div>
+            </div>
+            <span
+              className={cn(
+                'h-2.5 w-2.5 rounded-full',
+                node.isActive ? 'bg-success' : 'bg-foreground/20',
+              )}
+            />
+          </div>
+
+          {/* Stats */}
+          <div className="flex items-center gap-4 mb-3">
+            <div className="flex flex-col">
+              <span className="text-[18px] font-semibold text-foreground">
+                {node.callCount}
+              </span>
+              <span className="text-[10px] text-foreground/40">
+                call{node.callCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {node.isActive && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-success bg-success/10 rounded-full px-2 py-0.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                Running
+              </span>
+            )}
+          </div>
+
+          {/* Last detail */}
+          {node.details.length > 0 && (
+            <div className="flex-1 min-h-0">
+              <span className="text-[10px] text-foreground/40 uppercase tracking-wider block mb-1">
+                Last call
+              </span>
+              <p className="text-[11px] text-foreground/60 line-clamp-2">
+                {node.details[0].text}
+              </p>
+            </div>
+          )}
         </div>
       </foreignObject>
     </motion.g>
@@ -587,22 +798,40 @@ function NodeGraph({
   )
 
   // Zoom/pan state
+  const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const [vb, setVb] = useState<ViewBox>(INIT_VB)
   const isPanning = useRef(false)
   const lastMouse = useRef({ x: 0, y: 0 })
 
-  // Reset view when session changes
+  // Selected node state for detail popup
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+
+  // Reset view and selection when session changes
   useEffect(() => {
     setVb(INIT_VB)
+    setSelectedNodeId(null)
   }, [session?.id])
+
+  // Close popup on escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedNodeId) {
+        setSelectedNodeId(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedNodeId])
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const svg = svgRef.current
     if (!svg) return
 
-    const factor = e.deltaY > 0 ? 1.08 : 0.93
+    // Use larger factor for more responsive zoom
+    const factor = e.deltaY > 0 ? 1.12 : 0.89
     const rect = svg.getBoundingClientRect()
 
     setVb((prev) => {
@@ -610,8 +839,8 @@ function NodeGraph({
       const mx = prev.x + ((e.clientX - rect.left) / rect.width) * prev.w
       const my = prev.y + ((e.clientY - rect.top) / rect.height) * prev.h
 
-      const newW = Math.max(400, Math.min(8000, prev.w * factor))
-      const newH = Math.max(280, Math.min(5600, prev.h * factor))
+      const newW = Math.max(300, Math.min(6000, prev.w * factor))
+      const newH = Math.max(250, Math.min(5000, prev.h * factor))
 
       return {
         x: mx - ((mx - prev.x) / prev.w) * newW,
@@ -653,12 +882,21 @@ function NodeGraph({
     }
   }, [])
 
-  // Attach wheel listener with passive: false to prevent scroll
+  // Attach wheel listener to both container and SVG with capture phase
+  // Using capture ensures we get the event before any child elements
   useEffect(() => {
+    const container = containerRef.current
     const svg = svgRef.current
-    if (!svg) return
-    svg.addEventListener('wheel', handleWheel, { passive: false })
-    return () => svg.removeEventListener('wheel', handleWheel)
+    if (!container) return
+
+    const options = { passive: false, capture: true }
+    container.addEventListener('wheel', handleWheel, options)
+    svg?.addEventListener('wheel', handleWheel, options)
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel, options)
+      svg?.removeEventListener('wheel', handleWheel, options)
+    }
   }, [handleWheel])
 
   if (!session) {
@@ -690,7 +928,7 @@ function NodeGraph({
   const isProcessing = session.isProcessing
 
   return (
-    <div className="w-full h-full">
+    <div ref={containerRef} className="w-full h-full overflow-hidden" style={{ touchAction: 'none' }}>
       <svg
         ref={svgRef}
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
@@ -714,6 +952,11 @@ function NodeGraph({
               <feMergeNode in="blur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
+          </filter>
+
+          {/* Shadow for popup */}
+          <filter id="popup-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="4" stdDeviation="8" floodOpacity="0.15" />
           </filter>
         </defs>
 
@@ -791,14 +1034,48 @@ function NodeGraph({
             node={node}
             position={positions[i]}
             index={i}
+            isSelected={selectedNodeId === node.id}
+            onClick={() => setSelectedNodeId(selectedNodeId === node.id ? null : node.id)}
           />
         ))}
+
+        {/* Connection line: agent -> output */}
+        {(session.lastAssistantPreview || isProcessing) && (
+          <ConnectionLine
+            fromCenter={agentCenter}
+            fromSize={agentSize}
+            toCenter={{ x: WCX, y: WCY + OUTPUT_OFFSET_Y }}
+            toSize={{ w: OUTPUT_W, h: OUTPUT_H }}
+            isActive={true}
+          />
+        )}
+
+        {/* Output node showing assistant response */}
+        <OutputNode
+          preview={session.lastAssistantPreview}
+          isProcessing={isProcessing}
+        />
 
         {/* Model node */}
         <ModelNode model={model} isProcessing={isProcessing} />
 
         {/* Center agent node (on top) */}
         <AgentNode session={session} isProcessing={isProcessing} />
+
+        {/* Node detail popup (rendered on top of everything) */}
+        {selectedNodeId && (() => {
+          const nodeIndex = nodes.findIndex(n => n.id === selectedNodeId)
+          if (nodeIndex === -1) return null
+          const node = nodes[nodeIndex]
+          const pos = positions[nodeIndex]
+          return (
+            <NodeDetailPopup
+              node={node}
+              position={pos}
+              onClose={() => setSelectedNodeId(null)}
+            />
+          )
+        })()}
       </svg>
     </div>
   )
@@ -893,6 +1170,180 @@ function SessionCard({
         )}
       </div>
     </button>
+  )
+}
+
+// =============================================================================
+// Expandable Session Node — Grid node with inline expand for Q&A preview
+// =============================================================================
+
+function ExpandableSessionNode({
+  meta,
+  isExpanded,
+  onToggleExpand,
+  onOpenChat,
+}: {
+  meta: SessionMeta
+  isExpanded: boolean
+  onToggleExpand: () => void
+  onOpenChat: () => void
+}) {
+  const title = meta.name || meta.preview || 'Untitled'
+  const timeAgo = meta.lastMessageAt
+    ? formatDistanceToNow(new Date(meta.lastMessageAt), { addSuffix: false })
+    : null
+
+  return (
+    <motion.div
+      layout
+      initial={false}
+      animate={{
+        width: isExpanded ? '100%' : 'auto',
+      }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      className={cn(
+        'rounded-xl border transition-colors cursor-pointer',
+        isExpanded
+          ? 'border-accent/30 bg-accent/5 col-span-full'
+          : 'border-foreground/8 bg-foreground/[0.02] hover:border-foreground/15 hover:bg-foreground/[0.04]',
+      )}
+      onClick={(e) => {
+        e.stopPropagation()
+        if (!isExpanded) onToggleExpand()
+      }}
+    >
+      {/* Collapsed View */}
+      {!isExpanded && (
+        <div className="p-4">
+          {/* Status badge */}
+          <div className="flex items-center gap-1.5 mb-2">
+            {meta.isProcessing ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                ACTIVE
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium text-foreground/40 bg-foreground/5 rounded px-1.5 py-0.5">
+                COMPLETED
+              </span>
+            )}
+            {timeAgo && (
+              <span className="text-[10px] text-foreground/30 ml-auto">
+                {timeAgo}
+              </span>
+            )}
+          </div>
+
+          {/* Title */}
+          <p className="text-[13px] font-medium text-foreground leading-snug line-clamp-2 mb-2">
+            {title}
+          </p>
+
+          {/* Question preview (user message) */}
+          {meta.preview && (
+            <p className="text-[11px] text-foreground/40 line-clamp-1">
+              Q: {meta.preview}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Expanded View */}
+      {isExpanded && (
+        <div className="p-5">
+          {/* Header with close */}
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex items-center gap-2">
+              {meta.isProcessing ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                  ACTIVE
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium text-foreground/40 bg-foreground/5 rounded px-1.5 py-0.5">
+                  COMPLETED
+                </span>
+              )}
+              {timeAgo && (
+                <span className="text-[10px] text-foreground/30">
+                  {timeAgo} ago
+                </span>
+              )}
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleExpand()
+              }}
+              className="text-foreground/40 hover:text-foreground/60 text-xs px-2 py-1 rounded hover:bg-foreground/5"
+            >
+              Collapse
+            </button>
+          </div>
+
+          {/* Title */}
+          <h3 className="text-[15px] font-semibold text-foreground mb-4 leading-snug">
+            {title}
+          </h3>
+
+          {/* Q&A Preview */}
+          <div className="space-y-3 mb-4">
+            {/* Question */}
+            {meta.preview && (
+              <div className="bg-foreground/[0.03] rounded-lg p-3 border border-foreground/5">
+                <span className="text-[10px] font-medium text-foreground/40 uppercase tracking-wider block mb-1">
+                  Question
+                </span>
+                <p className="text-[13px] text-foreground/70 line-clamp-3">
+                  {meta.preview}
+                </p>
+              </div>
+            )}
+
+            {/* Answer */}
+            {meta.lastAssistantPreview && (
+              <div className="bg-accent/[0.03] rounded-lg p-3 border border-accent/10">
+                <span className="text-[10px] font-medium text-accent/60 uppercase tracking-wider block mb-1">
+                  Answer
+                </span>
+                <p className="text-[13px] text-foreground/70 line-clamp-4">
+                  {meta.lastAssistantPreview}
+                </p>
+              </div>
+            )}
+
+            {!meta.lastAssistantPreview && !meta.preview && (
+              <p className="text-[12px] text-foreground/30 italic">
+                No messages yet
+              </p>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-3 border-t border-foreground/8">
+            <div className="flex items-center gap-3">
+              {meta.tokenUsage && meta.tokenUsage.totalTokens > 0 && (
+                <span className="text-[11px] text-foreground/40 font-mono">
+                  {meta.tokenUsage.totalTokens >= 1000
+                    ? `${(meta.tokenUsage.totalTokens / 1000).toFixed(1)}K tokens`
+                    : `${meta.tokenUsage.totalTokens} tokens`}
+                </span>
+              )}
+            </div>
+            <Button
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenChat()
+              }}
+              className="h-8 text-xs"
+            >
+              Open Chat
+            </Button>
+          </div>
+        </div>
+      )}
+    </motion.div>
   )
 }
 
@@ -1061,7 +1512,7 @@ function CanvasView({
     >()
 
     for (const event of sessionEvents) {
-      if (event.type === 'tool_use' || event.type === 'tool_result') {
+      if (event.type === 'tool_start' || event.type === 'tool_result') {
         const toolName = event.toolName || 'unknown'
         const existing = toolMap.get(toolName) || {
           calls: 0,
@@ -1069,14 +1520,14 @@ function CanvasView({
           source: undefined,
         }
         existing.calls++
-        if (event.type === 'tool_use') {
+        if (event.type === 'tool_start') {
           existing.isActive = true
           existing.lastDetail = event.toolDetail
         }
         // Check if this is an MCP tool
         if (toolName.startsWith('mcp__')) {
           const serverName = toolName.split('__')[1]
-          existing.source = allSources.find((s) => s.slug === serverName)
+          existing.source = allSources.find((s) => s.config.slug === serverName)
         }
         toolMap.set(toolName, existing)
       }
@@ -1085,10 +1536,10 @@ function CanvasView({
     // Also add connected sources that haven't been called yet
     for (const source of allSources) {
       const matchingTool = Array.from(toolMap.keys()).find((k) =>
-        k.includes(source.slug),
+        k.includes(source.config.slug),
       )
       if (!matchingTool) {
-        toolMap.set(`source:${source.slug}`, {
+        toolMap.set(`source:${source.config.slug}`, {
           calls: 0,
           isActive: false,
           source,
@@ -1098,7 +1549,7 @@ function CanvasView({
 
     return Array.from(toolMap.entries()).map(([name, data]) => ({
       id: name,
-      label: data.source?.name || formatToolName(name),
+      label: data.source?.config.name || formatToolName(name),
       type: data.source ? ('source' as const) : ('tool' as const),
       source: data.source,
       isActive: data.isActive,

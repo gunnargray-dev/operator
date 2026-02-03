@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
-import { formatDistanceToNow, isToday, isYesterday, format, startOfDay } from "date-fns"
+import { isToday, isYesterday, format, startOfDay } from "date-fns"
 import { MoreHorizontal, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Star, Timer } from "lucide-react"
 import { toast } from "sonner"
 
@@ -43,7 +43,7 @@ import { useNavigation, useNavigationState, routes, isChatsNavigation } from "@/
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import type { SessionMeta } from "@/atoms/sessions"
-import { PERMISSION_MODE_CONFIG, type PermissionMode } from "@craft-agent/shared/agent/modes"
+import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 
 // Pagination constants
 const INITIAL_DISPLAY_LIMIT = 20
@@ -57,6 +57,25 @@ function formatDateHeader(date: Date): string {
   if (isToday(date)) return "Today"
   if (isYesterday(date)) return "Yesterday"
   return format(date, "MMM d")
+}
+
+/**
+ * Format a timestamp as compact relative time (e.g., "1m", "2h", "3d")
+ */
+function formatCompactTime(date: Date): string {
+  const now = Date.now()
+  const diff = now - date.getTime()
+  const seconds = Math.floor(diff / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+  const weeks = Math.floor(days / 7)
+
+  if (seconds < 60) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  if (hours < 24) return `${hours}h`
+  if (days < 7) return `${days}d`
+  return `${weeks}w`
 }
 
 /**
@@ -106,10 +125,12 @@ function hasUnreadMessages(session: SessionMeta): boolean {
 }
 
 /**
- * Check if session has any messages (uses lastFinalMessageId as proxy)
+ * Check if session has any messages
+ * Uses name/preview as proxy since these are set on first user message
+ * and are always available in session metadata (unlike lastFinalMessageId which requires message loading)
  */
 function hasMessages(session: SessionMeta): boolean {
-  return session.lastFinalMessageId !== undefined
+  return !!(session.name || session.preview || session.lastFinalMessageId)
 }
 
 /**
@@ -313,28 +334,31 @@ function SessionItem({
               {item.isProcessing && (
                 <Spinner className="text-[8px] text-foreground shrink-0" />
               )}
-              {!item.isProcessing && hasUnreadMessages(item) && (
-                <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
-                  New
+              {/* When processing: show current step instead of badges */}
+              {item.isProcessing && item.currentStep && (
+                <span className="truncate text-foreground/60">
+                  {item.currentStep}
                 </span>
               )}
-              {item.lastMessageRole === 'plan' && (
-                <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-success/10 text-success">
-                  Plan
-                </span>
-              )}
-              {permissionMode && (
-                <span
-                  className={cn(
-                    "shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded",
-                    // Mode-specific styling using CSS variables (theme-aware)
-                    permissionMode === 'safe' && "bg-foreground/5 text-foreground/60",
-                    permissionMode === 'ask' && "bg-info/10 text-info",
-                    permissionMode === 'allow-all' && "bg-accent/10 text-accent"
+              {/* When not processing: show status badges */}
+              {!item.isProcessing && (
+                <>
+                  {hasUnreadMessages(item) && (
+                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
+                      New
+                    </span>
                   )}
-                >
-                  {PERMISSION_MODE_CONFIG[permissionMode].shortName}
-                </span>
+                  {/* Status badges: Needs Input (plan waiting) or Complete (finished) */}
+                  {item.lastMessageRole === 'plan' ? (
+                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-warning/10 text-warning">
+                      Needs Input
+                    </span>
+                  ) : hasMessages(item) && (
+                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-foreground/5 text-foreground/40">
+                      Complete
+                    </span>
+                  )}
+                </>
               )}
               {item.sharedUrl && (
                 <DropdownMenu modal={true}>
@@ -384,14 +408,15 @@ function SessionItem({
                   </StyledDropdownMenuContent>
                 </DropdownMenu>
               )}
-              <span className="truncate">
-                {item.lastMessageAt && (
-                  <>{formatDistanceToNow(new Date(item.lastMessageAt), { addSuffix: true })}</>
-                )}
-              </span>
             </div>
           </div>
         </button>
+        {/* Timestamp - always visible, positioned under overflow menu */}
+        <div className="absolute right-3 bottom-3 z-10">
+          <span className="text-[10px] text-foreground/40">
+            {item.lastMessageAt && formatCompactTime(new Date(item.lastMessageAt))}
+          </span>
+        </div>
         {/* Action buttons - visible on hover or when menu is open */}
         <div
           className={cn(

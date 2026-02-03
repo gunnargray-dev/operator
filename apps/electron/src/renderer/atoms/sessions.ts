@@ -54,6 +54,10 @@ export interface SessionMeta {
     totalTokens: number
     costUsd: number
   }
+  /** Preview of the last assistant response (truncated) */
+  lastAssistantPreview?: string
+  /** Current step/action when processing (e.g., "Searching web...", "Reading files...") */
+  currentStep?: string
 }
 
 /**
@@ -70,11 +74,44 @@ function findLastFinalMessageId(messages: Message[]): string | undefined {
 }
 
 /**
+ * Extract preview text from the last assistant message (truncated to ~200 chars)
+ */
+function extractLastAssistantPreview(messages: Message[], maxLength = 200): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === 'assistant' && !msg.isIntermediate && msg.content) {
+      // Get text content, handling both string and array formats
+      let text = ''
+      if (typeof msg.content === 'string') {
+        text = msg.content
+      } else if (Array.isArray(msg.content)) {
+        // Extract text from content blocks
+        for (const block of msg.content) {
+          if (typeof block === 'string') {
+            text += block
+          } else if (block && typeof block === 'object' && 'text' in block) {
+            text += (block as { text: string }).text
+          }
+        }
+      }
+      // Clean up and truncate
+      text = text.trim()
+      if (text.length > maxLength) {
+        text = text.slice(0, maxLength).trim() + '...'
+      }
+      return text || undefined
+    }
+  }
+  return undefined
+}
+
+/**
  * Extract metadata from a full session object
  */
 export function extractSessionMeta(session: Session): SessionMeta {
   const messages = session.messages || []
   const lastFinalMessageId = findLastFinalMessageId(messages)
+  const lastAssistantPreview = extractLastAssistantPreview(messages)
 
   return {
     id: session.id,
@@ -103,6 +140,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
       totalTokens: session.tokenUsage.totalTokens,
       costUsd: session.tokenUsage.costUsd,
     } : undefined,
+    lastAssistantPreview,
   }
 }
 

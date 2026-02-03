@@ -539,6 +539,20 @@ export default function App() {
       const workspaceId = windowWorkspaceId ?? ''
       const agentEvent = event as unknown as AgentEvent
 
+      // Handle session metadata updates (e.g., currentStep for running tasks)
+      // This is a lightweight update that only affects the session list display
+      if (event.type === 'session_meta_update' && 'meta' in event) {
+        const metaUpdate = (event as { meta: Partial<import('./atoms/sessions').SessionMeta> }).meta
+        const metaMap = store.get(sessionMetaMapAtom)
+        const existingMeta = metaMap.get(sessionId)
+        if (existingMeta) {
+          const newMetaMap = new Map(metaMap)
+          newMetaMap.set(sessionId, { ...existingMeta, ...metaUpdate })
+          store.set(sessionMetaMapAtom, newMetaMap)
+        }
+        return
+      }
+
       // Dispatch window event when compaction completes
       // This allows FreeFormInput to sequence the plan execution message after compaction
       // Note: markCompactionComplete is called on the backend (sessions.ts) to ensure

@@ -98,6 +98,7 @@ import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import { RightSidebar } from "./RightSidebar"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
+import { CommandPalette } from "@/components/CommandPalette"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -505,6 +506,8 @@ function AppShellContent({
       { key: 'n', cmd: true, action: () => handleNewChat(true) },
       // Settings
       { key: ',', cmd: true, action: onOpenSettings },
+      // Command palette
+      { key: 'k', cmd: true, action: () => setCommandPaletteOpen(true) },
       // History navigation
       { key: '[', cmd: true, action: goBack },
       { key: ']', cmd: true, action: goForward },
@@ -778,6 +781,7 @@ function AppShellContent({
   // We use controlled popovers instead of deep links so the user can type
   // their request in the popover UI before opening a new chat window.
   const [editPopoverOpen, setEditPopoverOpen] = useState<'statuses' | 'add-source' | 'add-skill' | null>(null)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   // Handler for "Configure Statuses" context menu action
   // Opens the EditPopover for status configuration
@@ -859,14 +863,14 @@ function AppShellContent({
       result.push({ id: `nav:project:${folder.id}`, type: 'nav', action: () => navigate(routes.view.project(folder.id)) })
     }
 
-    // 3. Integrations
+    // 3. Activity (Canvas)
+    result.push({ id: 'nav:canvas', type: 'nav', action: () => navigate(routes.view.canvas()) })
+
+    // 4. Integrations
     result.push({ id: 'nav:integrations', type: 'nav', action: () => navigate(routes.view.integrations()) })
 
-    // 4. Files
+    // 5. Files
     result.push({ id: 'nav:files', type: 'nav', action: () => navigate(routes.view.files()) })
-
-    // 5. Canvas
-    result.push({ id: 'nav:canvas', type: 'nav', action: () => navigate(routes.view.canvas()) })
 
     // 6. Settings
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
@@ -1080,6 +1084,13 @@ function AppShellContent({
                     })),
                     { id: "separator:projects-nav", type: "separator" },
                     {
+                      id: "nav:canvas",
+                      title: "Activity",
+                      icon: LayoutGrid,
+                      variant: isCanvasNavigation(navState) ? "default" : "ghost",
+                      onClick: () => navigate(routes.view.canvas()),
+                    },
+                    {
                       id: "nav:integrations",
                       title: "Integrations",
                       label: String(sources.length + skills.length),
@@ -1094,13 +1105,6 @@ function AppShellContent({
                       icon: FolderOpen,
                       variant: isFilesNavigation(navState) ? "default" : "ghost",
                       onClick: () => navigate(routes.view.files()),
-                    },
-                    {
-                      id: "nav:canvas",
-                      title: "Activity",
-                      icon: LayoutGrid,
-                      variant: isCanvasNavigation(navState) ? "default" : "ghost",
-                      onClick: () => navigate(routes.view.canvas()),
                     },
                     { id: "separator:canvas-settings", type: "separator" },
                     {
@@ -1489,6 +1493,22 @@ function AppShellContent({
       )}
 
       </TooltipProvider>
+
+      {/* Command Palette (Cmd+K) */}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        sessions={sessionMetaMap}
+        onCreateSession={async () => {
+          await handleNewChat(true)
+        }}
+        onSelectSession={(sessionId) => {
+          navigate(routes.view.allChats(sessionId))
+        }}
+        onNavigate={(route) => {
+          navigate(route)
+        }}
+      />
 
       {/* Create Project Dialog */}
       <RenameDialog

@@ -35,7 +35,8 @@ import {
 } from "@craft-agent/ui"
 import { useFocusZone } from "@/hooks/keyboard"
 import { useTheme } from "@/hooks/useTheme"
-import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill } from "../../../shared/types"
+import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, LoadedSkill, AnyArtifact } from "../../../shared/types"
+import { ArtifactInlineCard } from "@/components/canvas"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import type { ThinkingLevel } from "@craft-agent/shared/agent/thinking-levels"
 import { TurnCard, UserMessageBubble, groupMessagesByTurn, formatTurnAsMarkdown, formatActivityAsMarkdown, type Turn, type AssistantTurn, type UserTurn, type SystemTurn, type AuthRequestTurn } from "@craft-agent/ui"
@@ -134,6 +135,13 @@ interface ChatDisplayProps {
   // Tutorial
   /** Disable send action (for tutorial guidance) */
   disableSend?: boolean
+  // Canvas artifacts
+  /** Artifacts for this session */
+  artifacts?: AnyArtifact[]
+  /** Whether the canvas panel is visible */
+  canvasVisible?: boolean
+  /** Callback to toggle canvas visibility */
+  onToggleCanvas?: () => void
 }
 
 /**
@@ -347,6 +355,10 @@ export function ChatDisplay({
   messagesLoading = false,
   // Tutorial
   disableSend = false,
+  // Canvas artifacts
+  artifacts = [],
+  canvasVisible = false,
+  onToggleCanvas,
 }: ChatDisplayProps) {
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
@@ -829,6 +841,17 @@ export function ChatDisplay({
                     />
                   )
                 })()}
+
+                {/* Artifact Inline Card - shows when artifacts exist and canvas is hidden */}
+                {artifacts.length > 0 && !canvasVisible && !session.isProcessing && (
+                  <div className={cn(CHAT_LAYOUT.maxWidth, "mx-auto w-full px-4 mt-4")}>
+                    <ArtifactInlineCard
+                      artifact={artifacts[artifacts.length - 1]}
+                      sessionId={session.id}
+                    />
+                  </div>
+                )}
+
                 {/* Scroll Anchor: For auto-scroll to bottom */}
                 <div ref={messagesEndRef} />
               </div>
