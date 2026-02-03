@@ -14,13 +14,38 @@ import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import type { StoredAttachment, MessageRole, ToolStatus, AuthRequestType, AuthStatus, CredentialInputMode, StoredMessage } from '@craft-agent/core/types';
 
 /**
- * Todo state for sessions (user-controlled, never automatic)
+ * Todo state for sessions
  *
  * Dynamic status ID referencing workspace status config.
  * Validated at runtime via validateSessionStatus().
  * Falls back to 'todo' if status doesn't exist.
+ *
+ * For scheduled tasks, transitions happen automatically:
+ * backlog → todo (scheduler fires) → done (agent completes) → backlog (reschedule)
+ * If agent needs permission/input: todo → needs-review → todo (user responds)
  */
 export type TodoState = string;
+
+/**
+ * Schedule configuration for recurring autonomous tasks.
+ * Sessions with scheduleConfig move through the task lifecycle automatically.
+ */
+export interface ScheduleConfig {
+  /** Whether scheduling is enabled for this session */
+  enabled: boolean;
+  /** Interval in milliseconds (e.g., 1800000 = 30min, 3600000 = 1hr) */
+  intervalMs: number;
+  /** The prompt/message to send each execution cycle */
+  prompt: string;
+  /** Permission policy for autonomous execution */
+  permissionPolicy: 'deny-all' | 'allow-safe' | 'allow-all';
+  /** Timestamp of last scheduled execution (for restart recovery) */
+  lastExecutedAt?: number;
+  /** Maximum consecutive errors before auto-disabling (default 5) */
+  maxErrors?: number;
+  /** Current consecutive error count */
+  errorCount?: number;
+}
 
 /**
  * Built-in status IDs (for TypeScript consumers)
@@ -62,12 +87,16 @@ export interface SessionConfig {
   name?: string;
   createdAt: number;
   lastUsedAt: number;
-  /** Whether this session is flagged */
-  isFlagged?: boolean;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
-  /** User-controlled todo state - determines inbox vs completed */
+  /** Todo state - determines inbox vs completed, auto-managed for scheduled tasks */
   todoState?: TodoState;
+  /** Schedule configuration for recurring autonomous tasks */
+  scheduleConfig?: ScheduleConfig;
+  /** Whether this session is favorited */
+  isFavorited?: boolean;
+  /** Project folder ID this session belongs to */
+  projectId?: string;
   /** ID of last message user has read */
   lastReadMessageId?: string;
   /** Per-session source selection (source slugs) */
@@ -121,12 +150,16 @@ export interface SessionHeader {
   name?: string;
   createdAt: number;
   lastUsedAt: number;
-  /** Whether this session is flagged */
-  isFlagged?: boolean;
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
-  /** User-controlled todo state - determines inbox vs completed */
+  /** Todo state - determines inbox vs completed, auto-managed for scheduled tasks */
   todoState?: TodoState;
+  /** Schedule configuration for recurring autonomous tasks */
+  scheduleConfig?: ScheduleConfig;
+  /** Whether this session is favorited */
+  isFavorited?: boolean;
+  /** Project folder ID this session belongs to */
+  projectId?: string;
   /** ID of last message user has read */
   lastReadMessageId?: string;
   /** Per-session source selection (source slugs) */
@@ -178,10 +211,14 @@ export interface SessionMetadata {
   /** Preview of first user message */
   preview?: string;
   sdkSessionId?: string;
-  /** Whether this session is flagged */
-  isFlagged?: boolean;
-  /** User-controlled todo state */
+  /** Todo state */
   todoState?: TodoState;
+  /** Schedule configuration for recurring autonomous tasks */
+  scheduleConfig?: ScheduleConfig;
+  /** Whether this session is favorited */
+  isFavorited?: boolean;
+  /** Project folder ID this session belongs to */
+  projectId?: string;
   /** Permission mode for this session */
   permissionMode?: PermissionMode;
   /** Number of plan files for this session */

@@ -248,6 +248,11 @@ export interface SessionScopedToolCallbacks {
    * Returns promise with command result (success/error, screenshot data, etc.)
    */
   onBrowserCommand?: (command: BrowserCommand) => Promise<BrowserCommandResult>;
+  /**
+   * Called when the agent configures a recurring schedule for this session.
+   * The session manager activates the scheduler and moves the session to backlog.
+   */
+  onScheduleConfigured?: (config: import('../sessions/types.ts').ScheduleConfig) => void;
 }
 
 /**
@@ -2867,6 +2872,63 @@ Get a free API key at: https://brave.com/search/api/ (2,000 queries/month free)
 }
 
 // ============================================================
+// Schedule Configuration Tool
+// ============================================================
+
+/**
+ * Create the configure_schedule tool.
+ * Allows the agent to set up recurring execution for the current session.
+ */
+function createConfigureScheduleTool(sessionId: string) {
+  return tool(
+    'configure_schedule',
+    'Set up a recurring schedule for this session. Use when the user asks for something to happen periodically (e.g. "every 5 minutes check...", "daily scan...", "hourly update...").',
+    {
+      intervalMinutes: z.number().min(1).max(10080).describe('How often to run, in minutes (1 min to 7 days)'),
+      prompt: z.string().min(1).describe('The message to send each execution cycle'),
+      permissionPolicy: z.enum(['deny-all', 'allow-safe', 'allow-all']).optional().describe('Permission policy for autonomous runs. Default: allow-safe'),
+      enabled: z.boolean().optional().describe('Set to false to disable an existing schedule. Default: true'),
+    },
+    async (args) => {
+      const callbacks = getSessionScopedToolCallbacks(sessionId);
+      if (!callbacks?.onScheduleConfigured) {
+        return {
+          content: [{ type: 'text' as const, text: 'Schedule configuration is not available in this environment.' }],
+        };
+      }
+
+      const enabled = args.enabled !== false;
+      const intervalMs = args.intervalMinutes * 60 * 1000;
+      const permissionPolicy = args.permissionPolicy ?? 'allow-safe';
+
+      callbacks.onScheduleConfigured({
+        enabled,
+        intervalMs,
+        prompt: args.prompt,
+        permissionPolicy,
+      });
+
+      if (!enabled) {
+        return {
+          content: [{ type: 'text' as const, text: 'Schedule disabled. This session will no longer run automatically.' }],
+        };
+      }
+
+      const humanInterval = args.intervalMinutes >= 60
+        ? `${Math.round(args.intervalMinutes / 60 * 10) / 10} hour(s)`
+        : `${args.intervalMinutes} minute(s)`;
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Schedule configured: this session will run every ${humanInterval} with prompt "${args.prompt}" (policy: ${permissionPolicy}). The session has been moved to the task queue.`,
+        }],
+      };
+    }
+  );
+}
+
+// ============================================================
 // Session-Scoped Tools Provider
 // ============================================================
 
@@ -2920,6 +2982,8 @@ export function getSessionScopedTools(sessionId: string, workspaceRootPath: stri
         // Web search tools (Brave Search API)
         createWebSearchTool(sessionId),
         createSetBraveApiKeyTool(sessionId),
+        // Schedule configuration tool
+        createConfigureScheduleTool(sessionId),
       ],
     });
     sessionScopedToolsCache.set(cacheKey, cached);

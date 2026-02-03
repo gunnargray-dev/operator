@@ -321,10 +321,6 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     command: import('../shared/types').SessionCommand
   ) => {
     switch (command.type) {
-      case 'flag':
-        return sessionManager.flagSession(sessionId)
-      case 'unflag':
-        return sessionManager.unflagSession(sessionId)
       case 'rename':
         return sessionManager.renameSession(sessionId, command.name)
       case 'setTodoState':
@@ -375,6 +371,39 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return sessionManager.markCompactionComplete(sessionId)
       case 'clearPendingPlanExecution':
         return sessionManager.clearPendingPlanExecution(sessionId)
+      case 'toggleFavorite':
+        return sessionManager.toggleFavorite(sessionId)
+      case 'setProjectId':
+        return sessionManager.setProjectId(sessionId, command.projectId)
+      case 'setScheduleConfig': {
+        if (command.config) {
+          sessionManager.updateScheduleConfig(sessionId, command.config)
+          if (command.config.enabled) {
+            sessionManager.getScheduler().scheduleSession(sessionId, command.config)
+          } else {
+            sessionManager.getScheduler().unscheduleSession(sessionId)
+          }
+        } else {
+          // config is null → disable scheduling
+          const session = await sessionManager.getSession(sessionId)
+          if (session?.scheduleConfig) {
+            sessionManager.updateScheduleConfig(sessionId, { ...session.scheduleConfig, enabled: false })
+          }
+          sessionManager.getScheduler().unscheduleSession(sessionId)
+        }
+        return
+      }
+      case 'resumeScheduled': {
+        // Resume a scheduled task from needs-review → active
+        await sessionManager.setTodoState(sessionId, 'todo')
+        const session = await sessionManager.getSession(sessionId)
+        if (session?.scheduleConfig?.enabled) {
+          sessionManager.getScheduler().onTaskResumed(sessionId)
+          // Re-send the scheduled prompt
+          await sessionManager.sendMessage(sessionId, session.scheduleConfig.prompt)
+        }
+        return
+      }
       default: {
         const _exhaustive: never = command
         throw new Error(`Unknown session command: ${JSON.stringify(command)}`)
@@ -1045,118 +1074,158 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Session Info Panel (files, notes, file watching)
   // ============================================================
 
-  // Recursive directory scanner for session files
-  // Filters out internal files (session.jsonl) and hidden files (. prefix)
-  // Returns only non-empty directories
-  async function scanSessionDirectory(dirPath: string): Promise<import('../shared/types').SessionFile[]> {
+  // Directories to ignore when scanning working directories
+  const IGNORED_DIRS = new Set([
+    'node_modules', '.git', '.svn', '.hg', '__pycache__', '.venv', 'venv',
+    '.next', '.nuxt', 'dist', 'build', '.cache', '.turbo', '.output',
+    'coverage', '.nyc_output', '.parcel-cache', '.webpack',
+  ])
+
+  // Recursive directory scanner
+  // skipNames: file/dir names to skip (e.g., 'session.jsonl')
+  // maxDepth: max recursion depth (0 = current dir only)
+  async function scanDirectory(
+    dirPath: string,
+    opts: { skipNames?: Set<string>; ignoreDirs?: Set<string>; maxDepth?: number; currentDepth?: number } = {}
+  ): Promise<import('../shared/types').SessionFile[]> {
     const { readdir, stat } = await import('fs/promises')
+    const skipNames = opts.skipNames ?? new Set()
+    const ignoreDirs = opts.ignoreDirs ?? new Set()
+    const maxDepth = opts.maxDepth ?? 20
+    const currentDepth = opts.currentDepth ?? 0
+
+    if (currentDepth > maxDepth) return []
+
     const entries = await readdir(dirPath, { withFileTypes: true })
     const files: import('../shared/types').SessionFile[] = []
 
     for (const entry of entries) {
-      // Skip internal and hidden files
-      if (entry.name === 'session.jsonl' || entry.name.startsWith('.')) continue
+      // Skip hidden files and explicitly skipped names
+      if (entry.name.startsWith('.') || skipNames.has(entry.name)) continue
 
       const fullPath = join(dirPath, entry.name)
 
       if (entry.isDirectory()) {
-        // Recursively scan subdirectory
-        const children = await scanSessionDirectory(fullPath)
-        // Only include non-empty directories
+        // Skip ignored directories
+        if (ignoreDirs.has(entry.name)) continue
+        const children = await scanDirectory(fullPath, { ...opts, currentDepth: currentDepth + 1 })
         if (children.length > 0) {
-          files.push({
-            name: entry.name,
-            path: fullPath,
-            type: 'directory',
-            children,
-          })
+          files.push({ name: entry.name, path: fullPath, type: 'directory', children })
         }
       } else {
         const stats = await stat(fullPath)
-        files.push({
-          name: entry.name,
-          path: fullPath,
-          type: 'file',
-          size: stats.size,
-        })
+        files.push({ name: entry.name, path: fullPath, type: 'file', size: stats.size })
       }
     }
 
-    // Sort: directories first, then alphabetically
     return files.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
       return a.name.localeCompare(b.name)
     })
   }
 
-  // Get files in session directory (recursive tree structure)
+  // Get files for a session: working directory (if set) or session folder
   ipcMain.handle(IPC_CHANNELS.GET_SESSION_FILES, async (_event, sessionId: string) => {
+    // Prefer working directory if set
+    const workingDir = sessionManager.getSessionWorkingDirectory(sessionId)
+    if (workingDir) {
+      try {
+        return await scanDirectory(workingDir, { ignoreDirs: IGNORED_DIRS, maxDepth: 5 })
+      } catch (error) {
+        ipcLog.error('Failed to scan working directory:', error)
+        return []
+      }
+    }
+
+    // Fall back to session folder
     const sessionPath = sessionManager.getSessionPath(sessionId)
     if (!sessionPath) return []
 
     try {
-      return await scanSessionDirectory(sessionPath)
+      return await scanDirectory(sessionPath, { skipNames: new Set(['session.jsonl']) })
     } catch (error) {
       ipcLog.error('Failed to get session files:', error)
       return []
     }
   })
 
+  // Scan an arbitrary directory (used by Files page for workspace browsing)
+  ipcMain.handle(IPC_CHANNELS.SCAN_DIRECTORY, async (_event, dirPath: string) => {
+    try {
+      return await scanDirectory(dirPath, { ignoreDirs: IGNORED_DIRS, maxDepth: 5 })
+    } catch (error) {
+      ipcLog.error('Failed to scan directory:', error)
+      return []
+    }
+  })
+
   // Session file watcher state - only one session watched at a time
-  let sessionFileWatcher: import('fs').FSWatcher | null = null
+  let sessionFileWatchers: import('fs').FSWatcher[] = []
   let watchedSessionId: string | null = null
   let fileChangeDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Start watching a session directory for file changes
-  ipcMain.handle(IPC_CHANNELS.WATCH_SESSION_FILES, async (_event, sessionId: string) => {
-    const sessionPath = sessionManager.getSessionPath(sessionId)
-    if (!sessionPath) return
-
-    // Close existing watcher if watching a different session
-    if (sessionFileWatcher) {
-      sessionFileWatcher.close()
-      sessionFileWatcher = null
-    }
+  function cleanupFileWatchers() {
+    for (const w of sessionFileWatchers) w.close()
+    sessionFileWatchers = []
     if (fileChangeDebounceTimer) {
       clearTimeout(fileChangeDebounceTimer)
       fileChangeDebounceTimer = null
     }
+  }
 
+  function notifyFileChange() {
+    if (fileChangeDebounceTimer) clearTimeout(fileChangeDebounceTimer)
+    fileChangeDebounceTimer = setTimeout(() => {
+      const { BrowserWindow } = require('electron')
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC_CHANNELS.SESSION_FILES_CHANGED, watchedSessionId)
+      }
+    }, 100)
+  }
+
+  // Start watching session files (working directory if set, else session folder)
+  ipcMain.handle(IPC_CHANNELS.WATCH_SESSION_FILES, async (_event, sessionId: string) => {
+    cleanupFileWatchers()
     watchedSessionId = sessionId
 
-    try {
-      const { watch } = await import('fs')
-      sessionFileWatcher = watch(sessionPath, { recursive: true }, (eventType, filename) => {
-        // Ignore internal files and hidden files
-        if (filename && (filename.includes('session.jsonl') || filename.startsWith('.'))) {
-          return
-        }
+    const { watch } = await import('fs')
 
-        // Debounce: wait 100ms before notifying to batch rapid changes
-        if (fileChangeDebounceTimer) {
-          clearTimeout(fileChangeDebounceTimer)
+    // Watch working directory if set
+    const workingDir = sessionManager.getSessionWorkingDirectory(sessionId)
+    if (workingDir) {
+      try {
+        const watcher = watch(workingDir, { recursive: true }, (_eventType, filename) => {
+          if (filename && filename.startsWith('.')) return
+          // Ignore changes inside ignored dirs
+          if (filename && IGNORED_DIRS.has(filename.split('/')[0])) return
+          notifyFileChange()
+        })
+        sessionFileWatchers.push(watcher)
+        ipcLog.info(`Watching working directory files: ${sessionId} (${workingDir})`)
+      } catch (error) {
+        ipcLog.error('Failed to watch working directory:', error)
+      }
+    } else {
+      // Fall back to session folder
+      const sessionPath = sessionManager.getSessionPath(sessionId)
+      if (sessionPath) {
+        try {
+          const watcher = watch(sessionPath, { recursive: true }, (_eventType, filename) => {
+            if (filename && (filename.includes('session.jsonl') || filename.startsWith('.'))) return
+            notifyFileChange()
+          })
+          sessionFileWatchers.push(watcher)
+          ipcLog.info(`Watching session files: ${sessionId}`)
+        } catch (error) {
+          ipcLog.error('Failed to start session file watcher:', error)
         }
-        fileChangeDebounceTimer = setTimeout(() => {
-          // Notify all windows that session files changed
-          const { BrowserWindow } = require('electron')
-          for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send(IPC_CHANNELS.SESSION_FILES_CHANGED, watchedSessionId)
-          }
-        }, 100)
-      })
-
-      ipcLog.info(`Watching session files: ${sessionId}`)
-    } catch (error) {
-      ipcLog.error('Failed to start session file watcher:', error)
+      }
     }
   })
 
   // Stop watching session files
   ipcMain.handle(IPC_CHANNELS.UNWATCH_SESSION_FILES, async () => {
-    if (sessionFileWatcher) {
-      sessionFileWatcher.close()
-      sessionFileWatcher = null
-    }
+    cleanupFileWatchers()
     if (fileChangeDebounceTimer) {
       clearTimeout(fileChangeDebounceTimer)
       fileChangeDebounceTimer = null
@@ -1574,6 +1643,75 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     const skillsDir = getWorkspaceSkillsPath(workspace.rootPath)
     const skillDir = join(skillsDir, skillSlug)
     await shell.showItemInFolder(skillDir)
+  })
+
+  // ============================================================
+  // Project Folders (Workspace-scoped)
+  // ============================================================
+
+  ipcMain.handle(IPC_CHANNELS.PROJECT_FOLDERS_LIST, async (_event, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { loadWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const config = loadWorkspaceConfig(workspace.rootPath)
+    return config?.projectFolders ?? []
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PROJECT_FOLDERS_CREATE, async (_event, workspaceId: string, name: string, color?: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const config = loadWorkspaceConfig(workspace.rootPath) ?? { name: workspace.name, updatedAt: Date.now() }
+
+    const folders = config.projectFolders ?? []
+    const maxOrder = folders.length > 0 ? Math.max(...folders.map(f => f.order)) : -1
+    const id = `proj-${Date.now().toString(36)}`
+
+    const folder = { id, name, color, order: maxOrder + 1 }
+    config.projectFolders = [...folders, folder]
+    saveWorkspaceConfig(workspace.rootPath, config)
+
+    return folder
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PROJECT_FOLDERS_UPDATE, async (_event, workspaceId: string, projectId: string, updates: { name?: string; color?: string }) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const config = loadWorkspaceConfig(workspace.rootPath)
+    if (!config) throw new Error('Failed to load workspace config')
+
+    const folders = config.projectFolders ?? []
+    const folder = folders.find(f => f.id === projectId)
+    if (!folder) throw new Error(`Project folder not found: ${projectId}`)
+
+    if (updates.name !== undefined) folder.name = updates.name
+    if (updates.color !== undefined) folder.color = updates.color
+
+    saveWorkspaceConfig(workspace.rootPath, config)
+    return folder
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PROJECT_FOLDERS_DELETE, async (_event, workspaceId: string, projectId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@craft-agent/shared/workspaces')
+    const config = loadWorkspaceConfig(workspace.rootPath)
+    if (!config) throw new Error('Failed to load workspace config')
+
+    config.projectFolders = (config.projectFolders ?? []).filter(f => f.id !== projectId)
+    saveWorkspaceConfig(workspace.rootPath, config)
+
+    // Clear projectId from any sessions that referenced this project
+    for (const session of sessionManager.getSessions()) {
+      if (session.projectId === projectId) {
+        sessionManager.setProjectId(session.id, null)
+      }
+    }
   })
 
   // ============================================================

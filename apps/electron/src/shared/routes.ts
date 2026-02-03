@@ -91,10 +91,6 @@ export const routes = {
     allChats: (sessionId?: string) =>
       sessionId ? `allChats/chat/${sessionId}` as const : 'allChats' as const,
 
-    /** Flagged view (chats navigator, flagged filter) */
-    flagged: (sessionId?: string) =>
-      sessionId ? `flagged/chat/${sessionId}` as const : 'flagged' as const,
-
     /** Todo state filter view (chats navigator, state filter) */
     state: (stateId: string, sessionId?: string) =>
       sessionId
@@ -124,6 +120,21 @@ export const routes = {
 
     /** Canvas view - grid of all sessions with activity feed */
     canvas: () => 'canvas' as const,
+
+    /** Board view - kanban board of sessions by status */
+    board: () => 'board' as const,
+
+    /** Integrations view - combined registry of sources and skills */
+    integrations: () => 'integrations' as const,
+
+    /** Files view - workspace file browser */
+    files: () => 'files' as const,
+
+    /** Project folder view - sessions in a project */
+    project: (projectId: string, sessionId?: string) =>
+      sessionId
+        ? `project/${projectId}/chat/${sessionId}` as const
+        : `project/${projectId}` as const,
   },
 } as const
 

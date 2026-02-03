@@ -48,6 +48,12 @@ export interface AppShellContextType {
   enabledModes?: PermissionMode[]
   /** Dynamic todo states from workspace config (provided by AppShell, defaults to empty) */
   todoStates?: TodoStateConfig[]
+  /** Project folders in current workspace */
+  projectFolders?: { id: string; name: string; color?: string }[]
+  /** Move session to a project folder (null to remove) */
+  onMoveToProject?: (sessionId: string, projectId: string | null) => void
+  /** Create a new project folder */
+  onCreateProject?: () => void
 
   // Unified session options (replaces ultrathinkSessions and sessionModes)
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */
@@ -57,8 +63,6 @@ export interface AppShellContextType {
   onCreateSession: (workspaceId: string) => Promise<Session>
   onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
   onRenameSession: (sessionId: string, name: string) => void
-  onFlagSession: (sessionId: string) => void
-  onUnflagSession: (sessionId: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void
   onTodoStateChange: (sessionId: string, state: TodoState) => void

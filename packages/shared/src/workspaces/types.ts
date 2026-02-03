@@ -28,6 +28,16 @@ export interface LocalMcpConfig {
 }
 
 /**
+ * A named project folder for grouping sessions
+ */
+export interface ProjectFolder {
+  id: string;
+  name: string;
+  color?: string;
+  order: number;
+}
+
+/**
  * Workspace configuration (stored in config.json)
  */
 export interface WorkspaceConfig {
@@ -53,6 +63,12 @@ export interface WorkspaceConfig {
    * Resolution order: ENV (CRAFT_LOCAL_MCP_ENABLED) > workspace config > default (true)
    */
   localMcpServers?: LocalMcpConfig;
+
+  /**
+   * Named project folders for grouping sessions.
+   * Sessions reference projects via projectId.
+   */
+  projectFolders?: ProjectFolder[];
 
   createdAt: number;
   updatedAt: number;

@@ -260,6 +260,42 @@ export function processEvent(
         }],
       }
 
+    case 'todo_state_changed':
+      return {
+        state: {
+          ...state,
+          session: { ...state.session, todoState: event.todoState },
+        },
+        effects: [],
+      }
+
+    case 'schedule_config_changed':
+      return {
+        state: {
+          ...state,
+          session: { ...state.session, scheduleConfig: event.scheduleConfig },
+        },
+        effects: [],
+      }
+
+    case 'favorite_changed':
+      return {
+        state: {
+          ...state,
+          session: { ...state.session, isFavorited: event.isFavorited },
+        },
+        effects: [],
+      }
+
+    case 'project_changed':
+      return {
+        state: {
+          ...state,
+          session: { ...state.session, projectId: event.projectId ?? undefined },
+        },
+        effects: [],
+      }
+
     default: {
       // Unknown event type - return state unchanged but as new reference
       // to ensure atom sync detects the "change"

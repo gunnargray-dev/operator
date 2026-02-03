@@ -24,7 +24,6 @@ export interface SessionMeta {
   workspaceId: string
   lastMessageAt?: number
   isProcessing?: boolean
-  isFlagged?: boolean
   lastReadMessageId?: string
   workingDirectory?: string
   enabledSourceSlugs?: string[]
@@ -42,6 +41,12 @@ export interface SessionMeta {
   isAsyncOperationOngoing?: boolean
   /** @deprecated Use isAsyncOperationOngoing instead */
   isRegeneratingTitle?: boolean
+  /** Schedule configuration for recurring tasks */
+  scheduleConfig?: import('@craft-agent/shared/sessions').ScheduleConfig
+  /** Whether this session is favorited */
+  isFavorited?: boolean
+  /** Project folder ID */
+  projectId?: string
 }
 
 /**
@@ -71,7 +76,6 @@ export function extractSessionMeta(session: Session): SessionMeta {
     workspaceId: session.workspaceId,
     lastMessageAt: session.lastMessageAt,
     isProcessing: session.isProcessing,
-    isFlagged: session.isFlagged,
     lastReadMessageId: session.lastReadMessageId,
     workingDirectory: session.workingDirectory,
     enabledSourceSlugs: session.enabledSourceSlugs,
@@ -83,6 +87,9 @@ export function extractSessionMeta(session: Session): SessionMeta {
     // Use isAsyncOperationOngoing if available, fall back to deprecated isRegeneratingTitle
     isAsyncOperationOngoing: session.isAsyncOperationOngoing ?? session.isRegeneratingTitle,
     isRegeneratingTitle: session.isRegeneratingTitle,
+    scheduleConfig: session.scheduleConfig,
+    isFavorited: session.isFavorited,
+    projectId: session.projectId,
   }
 }
 

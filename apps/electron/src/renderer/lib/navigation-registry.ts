@@ -46,7 +46,7 @@ export interface DetailsProps {
  */
 export interface NavigationData {
   /** All sessions in the current filter */
-  sessions: Array<{ id: string; isFlagged?: boolean; stateId?: string }>
+  sessions: Array<{ id: string; stateId?: string }>
   /** All sources */
   sources: Array<{ slug: string }>
   /** Current chat filter (if in chats mode) */
@@ -79,7 +79,7 @@ export type NavigatorType = 'chats' | 'sources' | 'settings'
 /**
  * Chat filter kinds that map to sidebar routes
  */
-export type ChatFilterKind = 'allChats' | 'flagged' | 'state'
+export type ChatFilterKind = 'allChats' | 'state'
 
 // =============================================================================
 // Details Page Metadata
@@ -130,9 +130,6 @@ export const NavigationRegistry = {
 
       let filtered = ctx.sessions
       switch (filter.kind) {
-        case 'flagged':
-          filtered = ctx.sessions.filter(s => s.isFlagged)
-          break
         case 'state':
           filtered = ctx.sessions.filter(s => s.stateId === filter.stateId)
           break

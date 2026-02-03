@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } from '@/components/ui/slash-command-menu'
 import { ChevronDown, X } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
@@ -51,7 +52,7 @@ export interface ActiveOptionBadgesProps {
 export function ActiveOptionBadges({
   ultrathinkEnabled = false,
   onUltrathinkChange,
-  permissionMode = 'ask',
+  permissionMode = 'allow-all',
   onPermissionModeChange,
   tasks = [],
   sessionId,
@@ -59,25 +60,14 @@ export function ActiveOptionBadges({
   onInsertMessage,
   className,
 }: ActiveOptionBadgesProps) {
-  // Only render if badges or tasks are active
-  if (!ultrathinkEnabled && !permissionMode && tasks.length === 0) {
+  // Only render if ultrathink badge or tasks are active
+  // Permission mode selector has moved to the input bottom bar
+  if (!ultrathinkEnabled && tasks.length === 0) {
     return null
   }
 
   return (
     <div className={cn("flex items-start gap-2 mb-2 px-px pt-px pb-0.5 overflow-x-auto overflow-y-hidden", className)}>
-      {/* Permission Mode Badge */}
-      {permissionMode && (
-        <div className="shrink-0">
-          <PermissionModeDropdown
-            permissionMode={permissionMode}
-            ultrathinkEnabled={ultrathinkEnabled}
-            onPermissionModeChange={onPermissionModeChange}
-            onUltrathinkChange={onUltrathinkChange}
-          />
-        </div>
-      )}
-
       {/* Ultrathink Badge */}
       {ultrathinkEnabled && (
         <button
@@ -102,14 +92,14 @@ export function ActiveOptionBadges({
   )
 }
 
-interface PermissionModeDropdownProps {
+export interface PermissionModeDropdownProps {
   permissionMode: PermissionMode
   ultrathinkEnabled?: boolean
   onPermissionModeChange?: (mode: PermissionMode) => void
   onUltrathinkChange?: (enabled: boolean) => void
 }
 
-function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onPermissionModeChange, onUltrathinkChange }: PermissionModeDropdownProps) {
+export function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onPermissionModeChange, onUltrathinkChange, compact = false }: PermissionModeDropdownProps & { compact?: boolean }) {
   const [open, setOpen] = React.useState(false)
   // Optimistic local state - updates immediately, syncs with prop
   const [optimisticMode, setOptimisticMode] = React.useState(permissionMode)
@@ -160,23 +150,40 @@ function PermissionModeDropdown({ permissionMode, ultrathinkEnabled = false, onP
   }
   const currentStyle = modeStyles[optimisticMode]
 
+  const triggerButton = (
+    <button
+      type="button"
+      data-tutorial="permission-mode-dropdown"
+      className={cn(
+        compact
+          ? "h-7 px-1.5 text-[13px] font-normal rounded-[6px] flex items-center gap-1 hover:bg-foreground/5 transition-colors outline-none"
+          : "h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shadow-tinted outline-none",
+        compact ? '' : currentStyle.className
+      )}
+      style={compact ? undefined : { '--shadow-color': currentStyle.shadowVar } as React.CSSProperties}
+    >
+      <PermissionModeIcon mode={optimisticMode} className={compact ? "h-4 w-4" : "h-3.5 w-3.5"} />
+      {!compact && <span>{config.displayName}</span>}
+      {!compact && <ChevronDown className="h-3.5 w-3.5 opacity-60" />}
+    </button>
+  )
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          data-tutorial="permission-mode-dropdown"
-          className={cn(
-            "h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shadow-tinted outline-none",
-            currentStyle.className
-          )}
-          style={{ '--shadow-color': currentStyle.shadowVar } as React.CSSProperties}
-        >
-          <PermissionModeIcon mode={optimisticMode} className="h-3.5 w-3.5" />
-          <span>{config.displayName}</span>
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-        </button>
-      </PopoverTrigger>
+      {compact ? (
+        <Tooltip open={open ? false : undefined}>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              {triggerButton}
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="top">{config.displayName}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <PopoverTrigger asChild>
+          {triggerButton}
+        </PopoverTrigger>
+      )}
       <PopoverContent
         className="w-auto p-0 bg-background/80 backdrop-blur-xl backdrop-saturate-150 border-border/50"
         side="top"

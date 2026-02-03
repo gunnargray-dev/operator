@@ -9,7 +9,7 @@
  * primitives, allowing the same component to work in both scenarios.
  *
  * Provides actions based on the sidebar item type:
- * - "Configure Statuses" (for allChats/status/flagged items) - triggers EditPopover callback
+ * - "Configure Statuses" (for allChats/status items) - triggers EditPopover callback
  * - "Add Source" (for sources) - triggers EditPopover callback
  * - "Add Skill" (for skills) - triggers EditPopover callback
  * - "Open in New Window" (for newChat only) - uses deep link
@@ -23,14 +23,14 @@ import {
 } from 'lucide-react'
 import { useMenuComponents } from '@/components/ui/menu-context'
 
-export type SidebarMenuType = 'allChats' | 'flagged' | 'status' | 'sources' | 'skills' | 'newChat'
+export type SidebarMenuType = 'allChats' | 'status' | 'sources' | 'skills' | 'newChat'
 
 export interface SidebarMenuProps {
   /** Type of sidebar item (determines available menu items) */
   type: SidebarMenuType
   /** Status ID for status items (e.g., 'todo', 'done') - not currently used but kept for future */
   statusId?: string
-  /** Handler for "Configure Statuses" action - only for allChats/status/flagged types */
+  /** Handler for "Configure Statuses" action - only for allChats/status types */
   onConfigureStatuses?: () => void
   /** Handler for "Add Source" action - only for sources type */
   onAddSource?: () => void
@@ -62,8 +62,8 @@ export function SidebarMenu({
     )
   }
 
-  // All Chats / Status / Flagged: show "Configure Statuses"
-  if ((type === 'allChats' || type === 'status' || type === 'flagged') && onConfigureStatuses) {
+  // All Chats / Status: show "Configure Statuses"
+  if ((type === 'allChats' || type === 'status') && onConfigureStatuses) {
     return (
       <MenuItem onClick={onConfigureStatuses}>
         <Settings2 className="h-3.5 w-3.5" />

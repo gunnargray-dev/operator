@@ -207,6 +207,9 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
+    // Initialize task scheduler for recurring autonomous tasks
+    sessionManager.initializeScheduler()
+
     // Initialize auto-update (check immediately on launch)
     // Skip in dev mode to avoid replacing /Applications app and launching it instead
     setAutoUpdateWindowManager(windowManager)
@@ -296,6 +299,8 @@ app.on('before-quit', async (event) => {
     } catch (error) {
       mainLog.error('Failed to flush sessions:', error)
     }
+    // Shutdown task scheduler
+    sessionManager.shutdownScheduler()
     // Clean up SessionManager resources (file watchers, timers, etc.)
     sessionManager.cleanup()
     // Now actually quit

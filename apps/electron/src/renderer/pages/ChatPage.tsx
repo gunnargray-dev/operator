@@ -6,11 +6,12 @@
  */
 
 import * as React from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useAtom } from 'jotai'
 import { AlertCircle, PanelRightOpen, PanelRightClose } from 'lucide-react'
 import { ChatDisplay } from '@/components/app-shell/ChatDisplay'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { SessionMenu } from '@/components/app-shell/SessionMenu'
+import { ScheduleConfigPanel } from '@/components/schedule/ScheduleConfigPanel'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { CanvasSplitView } from '@/components/canvas'
 import { useAppShellContext, usePendingPermission, usePendingCredential, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
@@ -19,6 +20,8 @@ import { routes } from '@/lib/navigate'
 import { ensureSessionMessagesLoadedAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { getSessionTitle } from '@/utils/session'
 import { sessionArtifactsAtomFamily, canvasVisibleAtomFamily, toggleCanvasAtom } from '@/atoms/artifacts'
+import { selectedCanvasSessionIdAtom } from '@/atoms/activity-feed'
+import { useNavigation } from '@/contexts/NavigationContext'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
@@ -49,10 +52,11 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     skills,
     enabledModes,
     todoStates,
+    projectFolders,
+    onMoveToProject,
+    onCreateProject,
     onSessionSourcesChange,
     onRenameSession,
-    onFlagSession,
-    onUnflagSession,
     onTodoStateChange,
     onDeleteSession,
     rightSidebarButton,
@@ -67,6 +71,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   // Use per-session atom for isolated updates
   const session = useSessionData(sessionId)
+
+  // Navigation for canvas entrypoint
+  const { navigate } = useNavigation()
+  const setCanvasSessionId = useSetAtom(selectedCanvasSessionIdAtom)
 
   // Canvas state - for toggling canvas visibility when artifacts exist
   const artifacts = useAtomValue(sessionArtifactsAtomFamily(sessionId))
@@ -200,7 +208,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // Get display title for header - use getSessionTitle for consistent fallback logic with SessionList
   // Priority: name > first user message > preview > "New chat"
   const displayTitle = session ? getSessionTitle(session) : (sessionMeta ? getSessionTitle(sessionMeta) : 'Chat')
-  const isFlagged = session?.isFlagged || sessionMeta?.isFlagged || false
   const sharedUrl = session?.sharedUrl || sessionMeta?.sharedUrl || null
   const currentTodoState = session?.todoState || sessionMeta?.todoState || 'todo'
   const hasMessages = !!(session?.messages?.length || sessionMeta?.lastFinalMessageId)
@@ -214,6 +221,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const [renameDialogOpen, setRenameDialogOpen] = React.useState(false)
   const [renameName, setRenameName] = React.useState('')
 
+  // Schedule dialog state
+  const [scheduleDialogOpen, setScheduleDialogOpen] = React.useState(false)
+
   // Session action handlers
   const handleRename = React.useCallback(() => {
     setRenameName(displayTitle)
@@ -226,14 +236,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
     setRenameDialogOpen(false)
   }, [sessionId, renameName, displayTitle, onRenameSession])
-
-  const handleFlag = React.useCallback(() => {
-    onFlagSession(sessionId)
-  }, [sessionId, onFlagSession])
-
-  const handleUnflag = React.useCallback(() => {
-    onUnflagSession(sessionId)
-  }, [sessionId, onUnflagSession])
 
   const handleMarkUnread = React.useCallback(() => {
     onMarkSessionUnread(sessionId)
@@ -258,40 +260,63 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId])
 
+  const handleOpenInCanvas = React.useCallback(() => {
+    setCanvasSessionId(sessionId)
+    navigate(routes.view.canvas())
+  }, [sessionId, setCanvasSessionId, navigate])
+
+  const handleConfigureSchedule = React.useCallback(() => {
+    setScheduleDialogOpen(true)
+  }, [])
+
   // Build title menu content for chat sessions using shared SessionMenu
+  const scheduleConfig = session?.scheduleConfig || sessionMeta?.scheduleConfig
   const titleMenu = React.useMemo(() => (
     <SessionMenu
       sessionId={sessionId}
       sessionName={displayTitle}
-      isFlagged={isFlagged}
       sharedUrl={sharedUrl}
       hasMessages={hasMessages}
       hasUnreadMessages={hasUnreadMessages}
       currentTodoState={currentTodoState}
       todoStates={todoStates ?? []}
+      hasSchedule={!!scheduleConfig?.enabled}
+      isFavorited={session?.isFavorited || sessionMeta?.isFavorited}
+      projectId={session?.projectId || sessionMeta?.projectId}
+      projectFolders={projectFolders}
       onRename={handleRename}
-      onFlag={handleFlag}
-      onUnflag={handleUnflag}
       onMarkUnread={handleMarkUnread}
+      onToggleFavorite={() => window.electronAPI.sessionCommand(sessionId, { type: 'toggleFavorite' })}
       onTodoStateChange={handleTodoStateChange}
       onOpenInNewWindow={handleOpenInNewWindow}
+      onOpenInCanvas={handleOpenInCanvas}
+      onMoveToProject={onMoveToProject ? (projectId) => onMoveToProject(sessionId, projectId) : undefined}
+      onCreateProject={onCreateProject}
+      onConfigureSchedule={handleConfigureSchedule}
       onDelete={handleDelete}
     />
   ), [
     sessionId,
     displayTitle,
-    isFlagged,
     sharedUrl,
     hasMessages,
     hasUnreadMessages,
     currentTodoState,
     todoStates,
+    session?.isFavorited,
+    session?.projectId,
+    sessionMeta?.isFavorited,
+    sessionMeta?.projectId,
+    projectFolders,
+    onMoveToProject,
+    onCreateProject,
+    scheduleConfig?.enabled,
     handleRename,
-    handleFlag,
-    handleUnflag,
     handleMarkUnread,
     handleTodoStateChange,
     handleOpenInNewWindow,
+    handleOpenInCanvas,
+    handleConfigureSchedule,
     handleDelete,
   ])
 
@@ -336,7 +361,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         lastMessageAt: sessionMeta.lastMessageAt || 0,
         messages: [],
         isProcessing: sessionMeta.isProcessing || false,
-        isFlagged: sessionMeta.isFlagged,
         workingDirectory: sessionMeta.workingDirectory,
         enabledSourceSlugs: sessionMeta.enabledSourceSlugs,
       }
@@ -385,6 +409,17 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onValueChange={setRenameName}
             onSubmit={handleRenameSubmit}
             placeholder="Enter chat name..."
+          />
+          <ScheduleConfigPanel
+            open={scheduleDialogOpen}
+            onOpenChange={setScheduleDialogOpen}
+            sessionId={sessionId}
+            sessionName={displayTitle}
+            currentConfig={scheduleConfig ?? null}
+            onSave={async (config) => {
+              await window.electronAPI.sessionCommand(sessionId, { type: 'setScheduleConfig', config })
+              setScheduleDialogOpen(false)
+            }}
           />
         </>
       )
@@ -453,6 +488,17 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         onValueChange={setRenameName}
         onSubmit={handleRenameSubmit}
         placeholder="Enter chat name..."
+      />
+      <ScheduleConfigPanel
+        open={scheduleDialogOpen}
+        onOpenChange={setScheduleDialogOpen}
+        sessionId={sessionId}
+        sessionName={displayTitle}
+        currentConfig={scheduleConfig ?? null}
+        onSave={async (config) => {
+          await window.electronAPI.sessionCommand(sessionId, { type: 'setScheduleConfig', config })
+          setScheduleDialogOpen(false)
+        }}
       />
     </>
   )

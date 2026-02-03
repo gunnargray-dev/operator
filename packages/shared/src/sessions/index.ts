@@ -11,6 +11,7 @@
 // Types
 export type {
   TodoState,
+  ScheduleConfig,
   SessionTokenUsage,
   StoredMessage,
   SessionConfig,
@@ -43,8 +44,6 @@ export {
   // Metadata updates
   updateSessionSdkId,
   updateSessionMetadata,
-  flagSession,
-  unflagSession,
   setSessionTodoState,
   // Pending plan execution (Accept & Compact flow)
   setPendingPlanExecution,
@@ -52,7 +51,6 @@ export {
   clearPendingPlanExecution,
   getPendingPlanExecution,
   // Session filtering
-  listFlaggedSessions,
   listCompletedSessions,
   listInboxSessions,
   // Plan storage

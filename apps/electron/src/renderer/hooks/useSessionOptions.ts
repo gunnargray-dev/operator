@@ -29,7 +29,7 @@ export interface SessionOptions {
 /** Default values for new sessions */
 export const defaultSessionOptions: SessionOptions = {
   ultrathinkEnabled: false,
-  permissionMode: 'ask', // Default to ask mode (prompt for permissions)
+  permissionMode: 'allow-all', // Default to auto mode
   thinkingLevel: DEFAULT_THINKING_LEVEL, // Default to 'think' level
 }
 

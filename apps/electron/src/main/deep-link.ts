@@ -7,7 +7,6 @@
  *
  * Compound format (hierarchical navigation):
  *   craftagents://allChats[/chat/{sessionId}]            - Chat list (all chats)
- *   craftagents://flagged[/chat/{sessionId}]             - Chat list (flagged filter)
  *   craftagents://state/{stateId}[/chat/{sessionId}]     - Chat list (state filter)
  *   craftagents://sources[/source/{sourceSlug}]          - Sources list
  *   craftagents://settings[/{subpage}]                   - Settings (general, shortcuts, preferences)
@@ -114,7 +113,7 @@ export function parseDeepLink(url: string): DeepLinkTarget | null {
 
     // Compound route prefixes
     const COMPOUND_ROUTE_PREFIXES = [
-      'allChats', 'flagged', 'state', 'sources', 'settings', 'skills'
+      'allChats', 'state', 'sources', 'settings', 'skills'
     ]
 
     // craftagents://allChats/..., craftagents://settings/..., etc. (compound routes)

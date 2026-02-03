@@ -420,7 +420,7 @@ export default function App() {
     // Handoff events signal end of streaming - need to sync back to React state
     // Also includes todo_state_changed so status updates immediately reflect in sidebar
     // async_operation included so shimmer effect on session titles updates in real-time
-    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'todo_state_changed', 'title_generated', 'async_operation'])
+    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'todo_state_changed', 'schedule_config_changed', 'favorite_changed', 'project_changed', 'title_generated', 'async_operation'])
 
     // Helper to handle side effects (same logic for both paths)
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
@@ -742,16 +742,6 @@ export default function App() {
     removeSession(sessionId)
     return true
   }, [store, removeSession])
-
-  const handleFlagSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isFlagged: true })
-    window.electronAPI.sessionCommand(sessionId, { type: 'flag' })
-  }, [updateSessionById])
-
-  const handleUnflagSession = useCallback((sessionId: string) => {
-    updateSessionById(sessionId, { isFlagged: false })
-    window.electronAPI.sessionCommand(sessionId, { type: 'unflag' })
-  }, [updateSessionById])
 
   const handleMarkSessionRead = useCallback((sessionId: string) => {
     // Find the session and compute the last final assistant message ID
@@ -1229,8 +1219,6 @@ export default function App() {
     onCreateSession: handleCreateSession,
     onSendMessage: handleSendMessage,
     onRenameSession: handleRenameSession,
-    onFlagSession: handleFlagSession,
-    onUnflagSession: handleUnflagSession,
     onMarkSessionRead: handleMarkSessionRead,
     onMarkSessionUnread: handleMarkSessionUnread,
     onTodoStateChange: handleTodoStateChange,
@@ -1267,8 +1255,6 @@ export default function App() {
     handleCreateSession,
     handleSendMessage,
     handleRenameSession,
-    handleFlagSession,
-    handleUnflagSession,
     handleMarkSessionRead,
     handleMarkSessionUnread,
     handleTodoStateChange,

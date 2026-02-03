@@ -24,8 +24,11 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isCanvasNavigation,
+  isBoardNavigation,
+  isIntegrationsNavigation,
+  isFilesNavigation,
 } from '@/contexts/NavigationContext'
-import { AppSettingsPage, WorkspaceSettingsPage, PermissionsSettingsPage, PreferencesPage, ShortcutsPage, SourceInfoPage, ChatPage, CanvasPage } from '@/pages'
+import { AppSettingsPage, WorkspaceSettingsPage, PermissionsSettingsPage, PreferencesPage, ShortcutsPage, SourceInfoPage, ChatPage, CanvasPage, BoardPage, IntegrationsPage, FilesPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 
 export interface MainContentPanelProps {
@@ -130,6 +133,33 @@ export function MainContentPanel({
     )
   }
 
+  // Integrations navigator - combined registry of sources and skills
+  if (isIntegrationsNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <IntegrationsPage />
+      </Panel>
+    )
+  }
+
+  // Board navigator - kanban board view
+  if (isBoardNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <BoardPage />
+      </Panel>
+    )
+  }
+
+  // Files navigator - workspace file browser
+  if (isFilesNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <FilesPage />
+      </Panel>
+    )
+  }
+
   // Canvas navigator - full-width canvas view
   if (isCanvasNavigation(navState)) {
     return wrapWithStoplight(
@@ -152,11 +182,7 @@ export function MainContentPanel({
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <div className="flex items-center justify-center h-full text-muted-foreground">
-          <p className="text-sm">
-            {navState.filter.kind === 'flagged'
-              ? 'No flagged conversations'
-              : 'No conversations yet'}
-          </p>
+          <p className="text-sm">No conversations yet</p>
         </div>
       </Panel>
     )

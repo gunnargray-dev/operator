@@ -19,7 +19,7 @@ export interface SidebarContextMenuConfig {
   type: SidebarMenuType
   /** Status ID for status items (e.g., 'todo', 'done') - not currently used but kept for future */
   statusId?: string
-  /** Handler for "Configure Statuses" action - for allChats/status/flagged types */
+  /** Handler for "Configure Statuses" action - for allChats/status types */
   onConfigureStatuses?: () => void
   /** Handler for "Add Source" action - for sources type */
   onAddSource?: () => void

@@ -143,7 +143,7 @@ class ModeManager {
     if (!state) {
       state = {
         sessionId,
-        permissionMode: 'ask', // Default to 'ask' until initialized
+        permissionMode: 'allow-all', // Default to auto mode
       };
       this.states.set(sessionId, state);
     }

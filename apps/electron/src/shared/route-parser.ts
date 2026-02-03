@@ -33,7 +33,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas'
+export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas' | 'board' | 'integrations'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -55,7 +55,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allChats', 'flagged', 'state', 'sources', 'skills', 'settings', 'canvas'
+  'allChats', 'state', 'project', 'sources', 'skills', 'settings', 'canvas', 'board', 'integrations'
 ]
 
 /**
@@ -72,7 +72,6 @@ export function isCompoundRoute(route: string): boolean {
  * Examples:
  *   'allChats' -> { navigator: 'chats', chatFilter: { kind: 'allChats' }, details: null }
  *   'allChats/chat/abc123' -> { navigator: 'chats', chatFilter: { kind: 'allChats' }, details: { type: 'chat', id: 'abc123' } }
- *   'flagged/chat/abc123' -> { navigator: 'chats', chatFilter: { kind: 'flagged' }, details: { type: 'chat', id: 'abc123' } }
  *   'sources' -> { navigator: 'sources', details: null }
  *   'sources/source/github' -> { navigator: 'sources', details: { type: 'source', id: 'github' } }
  *   'settings' -> { navigator: 'settings', details: { type: 'app', id: 'app' } }
@@ -134,7 +133,17 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return { navigator: 'canvas' as NavigatorType, details: null }
   }
 
-  // Chats navigator (allChats, flagged, state)
+  // Board navigator
+  if (first === 'board') {
+    return { navigator: 'board' as NavigatorType, details: null }
+  }
+
+  // Integrations navigator
+  if (first === 'integrations') {
+    return { navigator: 'integrations' as NavigatorType, details: null }
+  }
+
+  // Chats navigator (allChats, state, project)
   let chatFilter: ChatFilter
   let detailsStartIndex: number
 
@@ -143,14 +152,15 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
       chatFilter = { kind: 'allChats' }
       detailsStartIndex = 1
       break
-    case 'flagged':
-      chatFilter = { kind: 'flagged' }
-      detailsStartIndex = 1
-      break
     case 'state':
       if (!segments[1]) return null
       // Cast is safe because we're constructing from URL
       chatFilter = { kind: 'state', stateId: segments[1] as ChatFilter & { kind: 'state' } extends { stateId: infer T } ? T : never }
+      detailsStartIndex = 2
+      break
+    case 'project':
+      if (!segments[1]) return null
+      chatFilter = { kind: 'project', projectId: segments[1] }
       detailsStartIndex = 2
       break
     default:
@@ -200,6 +210,14 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     return 'canvas'
   }
 
+  if (parsed.navigator === 'board') {
+    return 'board'
+  }
+
+  if (parsed.navigator === 'integrations') {
+    return 'integrations'
+  }
+
   // Chats navigator
   let base: string
   const filter = parsed.chatFilter
@@ -209,11 +227,11 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
     case 'allChats':
       base = 'allChats'
       break
-    case 'flagged':
-      base = 'flagged'
-      break
     case 'state':
       base = `state/${filter.stateId}`
+      break
+    case 'project':
+      base = `project/${filter.projectId}`
       break
     default:
       base = 'allChats'
@@ -311,6 +329,16 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
     return { type: 'view', name: 'canvas', params: {} }
   }
 
+  // Board
+  if (compound.navigator === 'board') {
+    return { type: 'view', name: 'board', params: {} }
+  }
+
+  // Integrations
+  if (compound.navigator === 'integrations') {
+    return { type: 'view', name: 'integrations', params: {} }
+  }
+
   // Chats
   if (compound.chatFilter) {
     const filter = compound.chatFilter
@@ -322,13 +350,14 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
         params: {
           filter: filter.kind,
           ...(filter.kind === 'state' ? { stateId: filter.stateId } : {}),
+          ...(filter.kind === 'project' ? { projectId: filter.projectId } : {}),
         },
       }
     }
     return {
       type: 'view',
       name: filter.kind,
-      id: filter.kind === 'state' ? filter.stateId : undefined,
+      id: filter.kind === 'state' ? filter.stateId : filter.kind === 'project' ? filter.projectId : undefined,
       params: {},
     }
   }
@@ -426,6 +455,16 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'canvas' }
   }
 
+  // Board
+  if (compound.navigator === 'board') {
+    return { navigator: 'board' }
+  }
+
+  // Integrations
+  if (compound.navigator === 'integrations') {
+    return { navigator: 'integrations' }
+  }
+
   // Chats
   const filter = compound.chatFilter || { kind: 'allChats' as const }
   if (compound.details) {
@@ -495,8 +534,10 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         let filter: ChatFilter
         if (filterKind === 'state' && parsed.params.stateId) {
           filter = { kind: 'state', stateId: parsed.params.stateId }
+        } else if (filterKind === 'project' && parsed.params.projectId) {
+          filter = { kind: 'project', projectId: parsed.params.projectId }
         } else {
-          filter = { kind: filterKind as 'allChats' | 'flagged' }
+          filter = { kind: 'allChats' }
         }
         return {
           navigator: 'chats',
@@ -511,12 +552,6 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         filter: { kind: 'allChats' },
         details: null,
       }
-    case 'flagged':
-      return {
-        navigator: 'chats',
-        filter: { kind: 'flagged' },
-        details: null,
-      }
     case 'state':
       if (parsed.id) {
         return {
@@ -526,8 +561,21 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
         }
       }
       return { navigator: 'chats', filter: { kind: 'allChats' }, details: null }
+    case 'project':
+      if (parsed.id) {
+        return {
+          navigator: 'chats',
+          filter: { kind: 'project', projectId: parsed.id },
+          details: null,
+        }
+      }
+      return { navigator: 'chats', filter: { kind: 'allChats' }, details: null }
     case 'canvas':
       return { navigator: 'canvas' }
+    case 'board':
+      return { navigator: 'board' }
+    case 'integrations':
+      return { navigator: 'integrations' }
     default:
       return null
   }
@@ -559,6 +607,14 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
     return 'canvas'
   }
 
+  if (state.navigator === 'board') {
+    return 'board'
+  }
+
+  if (state.navigator === 'integrations') {
+    return 'integrations'
+  }
+
   // Chats
   const filter = state.filter
   let base: string
@@ -566,11 +622,11 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
     case 'allChats':
       base = 'allChats'
       break
-    case 'flagged':
-      base = 'flagged'
-      break
     case 'state':
       base = `state/${filter.stateId}`
+      break
+    case 'project':
+      base = `project/${filter.projectId}`
       break
   }
 

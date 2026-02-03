@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { formatDistanceToNow, isToday, isYesterday, format, startOfDay } from "date-fns"
-import { MoreHorizontal, Flag, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw } from "lucide-react"
+import { MoreHorizontal, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Star, Timer } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn, isHexColor } from "@/lib/utils"
@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/styled-context-menu"
 import { DropdownMenuProvider, ContextMenuProvider } from "@/components/ui/menu-context"
 import { SessionMenu } from "./SessionMenu"
+import { ScheduleConfigPanel } from "@/components/schedule/ScheduleConfigPanel"
 import {
   Dialog,
   DialogContent,
@@ -155,16 +156,21 @@ interface SessionItemProps {
   onKeyDown: (e: React.KeyboardEvent, item: SessionMeta) => void
   onRenameClick: (sessionId: string, currentName: string) => void
   onTodoStateChange: (sessionId: string, state: TodoStateId) => void
-  onFlag?: (sessionId: string) => void
-  onUnflag?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
   onSelect: () => void
   onOpenInNewWindow: () => void
+  onOpenInCanvas?: () => void
+  /** Project folder callbacks */
+  projectFolders?: { id: string; name: string; color?: string }[]
+  onMoveToProject?: (projectId: string | null) => void
+  onCreateProject?: () => void
   /** Current permission mode for this session (from real-time state) */
   permissionMode?: PermissionMode
   /** Current search query for highlighting matches */
   searchQuery?: string
+  /** Called when user wants to configure schedule for this session */
+  onConfigureSchedule: (sessionId: string) => void
   /** Dynamic todo states from workspace config */
   todoStates: TodoState[]
 }
@@ -183,12 +189,15 @@ function SessionItem({
   onKeyDown,
   onRenameClick,
   onTodoStateChange,
-  onFlag,
-  onUnflag,
   onMarkUnread,
   onDelete,
   onSelect,
   onOpenInNewWindow,
+  onOpenInCanvas,
+  projectFolders,
+  onMoveToProject,
+  onCreateProject,
+  onConfigureSchedule,
   permissionMode,
   searchQuery,
   todoStates,
@@ -309,9 +318,6 @@ function SessionItem({
                   New
                 </span>
               )}
-              {item.isFlagged && (
-                <Flag className="h-[10px] w-[10px] text-info fill-info shrink-0" />
-              )}
               {item.lastMessageRole === 'plan' && (
                 <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-success/10 text-success">
                   Plan
@@ -406,18 +412,24 @@ function SessionItem({
                   <SessionMenu
                     sessionId={item.id}
                     sessionName={getSessionTitle(item)}
-                    isFlagged={item.isFlagged ?? false}
                     sharedUrl={item.sharedUrl}
                     hasMessages={hasMessages(item)}
                     hasUnreadMessages={hasUnreadMessages(item)}
                     currentTodoState={currentTodoState}
                     todoStates={todoStates}
+                    hasSchedule={!!item.scheduleConfig?.enabled}
+                    isFavorited={item.isFavorited}
+                    projectId={item.projectId}
+                    projectFolders={projectFolders}
                     onRename={() => onRenameClick(item.id, getSessionTitle(item))}
-                    onFlag={() => onFlag?.(item.id)}
-                    onUnflag={() => onUnflag?.(item.id)}
                     onMarkUnread={() => onMarkUnread(item.id)}
+                    onToggleFavorite={() => window.electronAPI.sessionCommand(item.id, { type: 'toggleFavorite' })}
                     onTodoStateChange={(state) => onTodoStateChange(item.id, state)}
                     onOpenInNewWindow={onOpenInNewWindow}
+                    onOpenInCanvas={onOpenInCanvas}
+                    onMoveToProject={onMoveToProject}
+                    onCreateProject={onCreateProject}
+                    onConfigureSchedule={() => onConfigureSchedule(item.id)}
                     onDelete={() => onDelete(item.id)}
                   />
                 </DropdownMenuProvider>
@@ -433,18 +445,23 @@ function SessionItem({
             <SessionMenu
               sessionId={item.id}
               sessionName={getSessionTitle(item)}
-              isFlagged={item.isFlagged ?? false}
               sharedUrl={item.sharedUrl}
               hasMessages={hasMessages(item)}
               hasUnreadMessages={hasUnreadMessages(item)}
               currentTodoState={currentTodoState}
               todoStates={todoStates}
+              hasSchedule={!!item.scheduleConfig?.enabled}
+              isFavorited={item.isFavorited}
+              projectId={item.projectId}
+              projectFolders={projectFolders}
               onRename={() => onRenameClick(item.id, getSessionTitle(item))}
-              onFlag={() => onFlag?.(item.id)}
-              onUnflag={() => onUnflag?.(item.id)}
               onMarkUnread={() => onMarkUnread(item.id)}
+              onToggleFavorite={() => window.electronAPI.sessionCommand(item.id, { type: 'toggleFavorite' })}
               onTodoStateChange={(state) => onTodoStateChange(item.id, state)}
               onOpenInNewWindow={onOpenInNewWindow}
+              onMoveToProject={onMoveToProject}
+              onCreateProject={onCreateProject}
+              onConfigureSchedule={() => onConfigureSchedule(item.id)}
               onDelete={() => onDelete(item.id)}
             />
           </ContextMenuProvider>
@@ -468,11 +485,11 @@ function DateHeader({ label }: { label: string }) {
   )
 }
 
+export type SessionListFilterTab = 'all' | 'favorites' | 'scheduled'
+
 interface SessionListProps {
   items: SessionMeta[]
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
-  onFlag?: (sessionId: string) => void
-  onUnflag?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
   onTodoStateChange: (sessionId: string, state: TodoStateId) => void
   onRename: (sessionId: string, name: string) => void
@@ -482,8 +499,16 @@ interface SessionListProps {
   onSessionSelect?: (session: SessionMeta) => void
   /** Called when user wants to open a session in a new window */
   onOpenInNewWindow?: (session: SessionMeta) => void
-  /** Called to navigate to a specific view (e.g., 'allChats', 'flagged') */
-  onNavigateToView?: (view: 'allChats' | 'flagged') => void
+  /** Called when user wants to open a session in canvas */
+  onOpenInCanvas?: (session: SessionMeta) => void
+  /** Project folders available in the workspace */
+  projectFolders?: { id: string; name: string; color?: string }[]
+  /** Called when user wants to move a session to a project */
+  onMoveToProject?: (sessionId: string, projectId: string | null) => void
+  /** Called when user wants to create a new project from the menu */
+  onCreateProject?: () => void
+  /** Called to navigate to a specific view (e.g., 'allChats') */
+  onNavigateToView?: (view: 'allChats') => void
   /** Unified session options per session (real-time state) */
   sessionOptions?: Map<string, import('../../hooks/useSessionOptions').SessionOptions>
   /** Whether search mode is active */
@@ -496,6 +521,10 @@ interface SessionListProps {
   onSearchClose?: () => void
   /** Dynamic todo states from workspace config */
   todoStates?: TodoState[]
+  /** Active filter tab */
+  filterTab?: SessionListFilterTab
+  /** Called when filter tab changes */
+  onFilterTabChange?: (tab: SessionListFilterTab) => void
 }
 
 // Re-export TodoStateId for use by parent components
@@ -514,14 +543,16 @@ export type { TodoStateId }
 export function SessionList({
   items,
   onDelete,
-  onFlag,
-  onUnflag,
   onMarkUnread,
   onTodoStateChange,
   onRename,
   onFocusChatInput,
   onSessionSelect,
   onOpenInNewWindow,
+  onOpenInCanvas,
+  projectFolders,
+  onMoveToProject,
+  onCreateProject,
   onNavigateToView,
   sessionOptions,
   searchActive,
@@ -529,6 +560,8 @@ export function SessionList({
   onSearchChange,
   onSearchClose,
   todoStates = [],
+  filterTab = 'all',
+  onFilterTabChange,
 }: SessionListProps) {
   const [session] = useSession()
   const { navigate } = useNavigation()
@@ -540,6 +573,7 @@ export function SessionList({
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
+  const [scheduleDialogSessionId, setScheduleDialogSessionId] = useState<string | null>(null)
   const [displayLimit, setDisplayLimit] = useState(INITIAL_DISPLAY_LIMIT)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -569,23 +603,30 @@ export function SessionList({
     })
   }, [sortedItems, searchQuery])
 
-  // Reset display limit when search query changes
+  // Filter items by active tab (favorites, scheduled)
+  const tabFilteredItems = useMemo(() => {
+    if (filterTab === 'favorites') return searchFilteredItems.filter(item => item.isFavorited)
+    if (filterTab === 'scheduled') return searchFilteredItems.filter(item => item.scheduleConfig?.enabled)
+    return searchFilteredItems
+  }, [searchFilteredItems, filterTab])
+
+  // Reset display limit when search query or filter tab changes
   useEffect(() => {
     setDisplayLimit(INITIAL_DISPLAY_LIMIT)
-  }, [searchQuery])
+  }, [searchQuery, filterTab])
 
   // Paginate items - only show up to displayLimit
   const paginatedItems = useMemo(() => {
-    return searchFilteredItems.slice(0, displayLimit)
-  }, [searchFilteredItems, displayLimit])
+    return tabFilteredItems.slice(0, displayLimit)
+  }, [tabFilteredItems, displayLimit])
 
   // Check if there are more items to load
-  const hasMore = displayLimit < searchFilteredItems.length
+  const hasMore = displayLimit < tabFilteredItems.length
 
   // Load more items callback
   const loadMore = useCallback(() => {
-    setDisplayLimit(prev => Math.min(prev + BATCH_SIZE, searchFilteredItems.length))
-  }, [searchFilteredItems.length])
+    setDisplayLimit(prev => Math.min(prev + BATCH_SIZE, tabFilteredItems.length))
+  }, [tabFilteredItems.length])
 
   // Intersection observer for infinite scroll
   useEffect(() => {
@@ -633,8 +674,6 @@ export function SessionList({
     // Navigate using view routes to preserve filter context
     if (!currentFilter || currentFilter.kind === 'allChats') {
       navigate(routes.view.allChats(item.id))
-    } else if (currentFilter.kind === 'flagged') {
-      navigate(routes.view.flagged(item.id))
     } else if (currentFilter.kind === 'state') {
       navigate(routes.view.state(currentFilter.stateId, item.id))
     }
@@ -644,30 +683,6 @@ export function SessionList({
   const handleEnter = useCallback(() => {
     onFocusChatInput?.()
   }, [onFocusChatInput])
-
-  const handleFlagWithToast = useCallback((sessionId: string) => {
-    if (!onFlag) return
-    onFlag(sessionId)
-    toast('Conversation flagged', {
-      description: 'Added to your flagged items',
-      action: onUnflag ? {
-        label: 'Undo',
-        onClick: () => onUnflag(sessionId),
-      } : undefined,
-    })
-  }, [onFlag, onUnflag])
-
-  const handleUnflagWithToast = useCallback((sessionId: string) => {
-    if (!onUnflag) return
-    onUnflag(sessionId)
-    toast('Flag removed', {
-      description: 'Removed from flagged items',
-      action: onFlag ? {
-        label: 'Undo',
-        onClick: () => onFlag(sessionId),
-      } : undefined,
-    })
-  }, [onFlag, onUnflag])
 
   const handleDeleteWithToast = useCallback(async (sessionId: string): Promise<boolean> => {
     // Confirmation dialog is shown by handleDeleteSession in App.tsx
@@ -757,17 +772,64 @@ export function SessionList({
 
   // Empty state - render outside ScrollArea to avoid scroll
   if (flatItems.length === 0 && !searchActive) {
+    const emptyMessage = filterTab === 'favorites'
+      ? 'No favorites yet'
+      : filterTab === 'scheduled'
+        ? 'No scheduled tasks yet'
+        : 'No conversations yet'
+
     return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-sm text-muted-foreground">
-          No conversations yet
-        </p>
-      </div>
+      <>
+        {/* Show filter tabs even in empty state */}
+        {onFilterTabChange && (
+          <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border/30">
+            {(['all', 'favorites', 'scheduled'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => onFilterTabChange(tab)}
+                className={cn(
+                  "px-2 py-1 text-[11px] font-medium rounded-md transition-colors",
+                  filterTab === tab
+                    ? "bg-foreground/10 text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+                )}
+              >
+                {tab === 'all' ? 'All' : tab === 'favorites' ? 'Favorites' : 'Scheduled'}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center justify-center h-full">
+          <p className="text-sm text-muted-foreground">
+            {emptyMessage}
+          </p>
+        </div>
+      </>
     )
   }
 
   return (
     <>
+      {/* Filter tabs - shown when onFilterTabChange is provided */}
+      {onFilterTabChange && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-border/30">
+          {(['all', 'favorites', 'scheduled'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => onFilterTabChange(tab)}
+              className={cn(
+                "px-2 py-1 text-[11px] font-medium rounded-md transition-colors",
+                filterTab === tab
+                  ? "bg-foreground/10 text-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+              )}
+            >
+              {tab === 'all' ? 'All' : tab === 'favorites' ? 'Favorites' : 'Scheduled'}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ScrollArea with mask-fade-top-short - shorter fade to avoid header overlap */}
       <ScrollArea className="h-screen select-none mask-fade-top-short">
         {/* Search input - sticky at top */}
@@ -834,16 +896,17 @@ export function SessionList({
                     onKeyDown={handleKeyDown}
                     onRenameClick={handleRenameClick}
                     onTodoStateChange={onTodoStateChange}
-                    onFlag={onFlag ? handleFlagWithToast : undefined}
-                    onUnflag={onUnflag ? handleUnflagWithToast : undefined}
                     onMarkUnread={onMarkUnread}
                     onDelete={handleDeleteWithToast}
+                    onConfigureSchedule={(sid) => {
+                      requestAnimationFrame(() => {
+                        setScheduleDialogSessionId(sid)
+                      })
+                    }}
                     onSelect={() => {
                       // Navigate to session with filter context (updates URL and selection)
                       if (!currentFilter || currentFilter.kind === 'allChats') {
                         navigate(routes.view.allChats(item.id))
-                      } else if (currentFilter.kind === 'flagged') {
-                        navigate(routes.view.flagged(item.id))
                       } else if (currentFilter.kind === 'state') {
                         navigate(routes.view.state(currentFilter.stateId, item.id))
                       }
@@ -851,6 +914,10 @@ export function SessionList({
                       onSessionSelect?.(item)
                     }}
                     onOpenInNewWindow={() => onOpenInNewWindow?.(item)}
+                    onOpenInCanvas={onOpenInCanvas ? () => onOpenInCanvas(item) : undefined}
+                    projectFolders={projectFolders}
+                    onMoveToProject={onMoveToProject ? (projectId) => onMoveToProject(item.id, projectId) : undefined}
+                    onCreateProject={onCreateProject}
                     permissionMode={sessionOptions?.get(item.id)?.permissionMode}
                     searchQuery={searchQuery}
                     todoStates={todoStates}
@@ -878,6 +945,24 @@ export function SessionList({
         onSubmit={handleRenameSubmit}
         placeholder="Enter a name..."
       />
+
+      {/* Schedule Config Dialog */}
+      {scheduleDialogSessionId && (() => {
+        const scheduleSession = items.find(s => s.id === scheduleDialogSessionId)
+        return (
+          <ScheduleConfigPanel
+            open={!!scheduleDialogSessionId}
+            onOpenChange={(open) => { if (!open) setScheduleDialogSessionId(null) }}
+            sessionId={scheduleDialogSessionId}
+            sessionName={scheduleSession ? getSessionTitle(scheduleSession) : ''}
+            currentConfig={scheduleSession?.scheduleConfig ?? null}
+            onSave={async (config) => {
+              await window.electronAPI.sessionCommand(scheduleDialogSessionId, { type: 'setScheduleConfig', config })
+              setScheduleDialogSessionId(null)
+            }}
+          />
+        )
+      })()}
     </>
   )
 }

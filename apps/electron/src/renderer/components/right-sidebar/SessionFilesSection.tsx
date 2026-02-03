@@ -379,7 +379,7 @@ export function SessionFilesSection({ sessionId, className }: SessionFilesSectio
         {files.length === 0 ? (
           <div className="px-4 text-muted-foreground select-none">
             <p className="text-xs">
-              {isLoading ? 'Loading...' : 'Files attached or created by this chat will appear here.'}
+              {isLoading ? 'Loading...' : 'Files in your working directory will appear here.'}
             </p>
           </div>
         ) : (

@@ -277,12 +277,17 @@ export interface Session {
   messages: Message[]
   isProcessing: boolean
   // Session metadata
-  isFlagged?: boolean
   // Advanced options (persisted per session)
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
-  // Todo state (user-controlled) - determines open vs closed
+  // Todo state - determines open vs closed, auto-managed for scheduled tasks
   todoState?: TodoState
+  // Schedule configuration for recurring autonomous tasks
+  scheduleConfig?: import('@craft-agent/shared/sessions').ScheduleConfig
+  // Whether this session is favorited
+  isFavorited?: boolean
+  // Project folder ID this session belongs to
+  projectId?: string
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
   // Per-session source selection (source slugs)
@@ -375,10 +380,11 @@ export type SessionEvent =
   // User message events (for optimistic UI with backend as source of truth)
   | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing' }
   // Session metadata events (for multi-window sync)
-  | { type: 'session_flagged'; sessionId: string }
-  | { type: 'session_unflagged'; sessionId: string }
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
   | { type: 'todo_state_changed'; sessionId: string; todoState: TodoState }
+  | { type: 'schedule_config_changed'; sessionId: string; scheduleConfig: import('@craft-agent/shared/sessions').ScheduleConfig }
+  | { type: 'favorite_changed'; sessionId: string; isFavorited: boolean }
+  | { type: 'project_changed'; sessionId: string; projectId: string | null }
   | { type: 'session_deleted'; sessionId: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
   | { type: 'session_unshared'; sessionId: string }
@@ -416,11 +422,8 @@ export interface SendMessageOptions {
 
 /**
  * SessionCommand - Consolidated session operations
- * Replaces individual IPC calls: flag, unflag, rename, setTodoState, etc.
  */
 export type SessionCommand =
-  | { type: 'flag' }
-  | { type: 'unflag' }
   | { type: 'rename'; name: string }
   | { type: 'setTodoState'; state: TodoState }
   | { type: 'markRead' }
@@ -436,6 +439,13 @@ export type SessionCommand =
   | { type: 'revokeShare' }
   | { type: 'startOAuth'; requestId: string }
   | { type: 'refreshTitle' }
+  // Schedule config
+  | { type: 'setScheduleConfig'; config: import('@craft-agent/shared/sessions').ScheduleConfig | null }
+  | { type: 'resumeScheduled' }
+  // Favorite toggle
+  | { type: 'toggleFavorite' }
+  // Project assignment
+  | { type: 'setProjectId'; projectId: string | null }
   // Pending plan execution (Accept & Compact flow)
   | { type: 'setPendingPlanExecution'; planPath: string }
   | { type: 'markCompactionComplete' }
@@ -498,6 +508,7 @@ export const IPC_CHANNELS = {
   READ_FILE_ATTACHMENT: 'file:readAttachment',
   STORE_ATTACHMENT: 'file:storeAttachment',
   GENERATE_THUMBNAIL: 'file:generateThumbnail',
+  SCAN_DIRECTORY: 'file:scanDirectory',
 
   // Session info panel
   GET_SESSION_FILES: 'sessions:getFiles',
@@ -607,6 +618,12 @@ export const IPC_CHANNELS = {
   SKILLS_OPEN_EDITOR: 'skills:openEditor',
   SKILLS_OPEN_FINDER: 'skills:openFinder',
   SKILLS_CHANGED: 'skills:changed',
+
+  // Project folders (workspace-scoped)
+  PROJECT_FOLDERS_LIST: 'projects:list',
+  PROJECT_FOLDERS_CREATE: 'projects:create',
+  PROJECT_FOLDERS_UPDATE: 'projects:update',
+  PROJECT_FOLDERS_DELETE: 'projects:delete',
 
   // Status management (workspace-scoped)
   STATUSES_LIST: 'statuses:list',
@@ -787,6 +804,9 @@ export interface ElectronAPI {
   deleteDraft(sessionId: string): Promise<void>
   getAllDrafts(): Promise<Record<string, string>>
 
+  // File scanning
+  scanDirectory(dirPath: string): Promise<SessionFile[]>
+
   // Session Info Panel
   getSessionFiles(sessionId: string): Promise<SessionFile[]>
   getSessionNotes(sessionId: string): Promise<string>
@@ -821,6 +841,12 @@ export interface ElectronAPI {
 
   // Skills change listener (live updates when skills are added/removed/modified)
   onSkillsChanged(callback: (skills: LoadedSkill[]) => void): () => void
+
+  // Project folders (workspace-scoped)
+  listProjectFolders(workspaceId: string): Promise<import('@craft-agent/shared/workspaces').ProjectFolder[]>
+  createProjectFolder(workspaceId: string, name: string, color?: string): Promise<import('@craft-agent/shared/workspaces').ProjectFolder>
+  updateProjectFolder(workspaceId: string, projectId: string, updates: { name?: string; color?: string }): Promise<import('@craft-agent/shared/workspaces').ProjectFolder>
+  deleteProjectFolder(workspaceId: string, projectId: string): Promise<void>
 
   // Statuses (workspace-scoped)
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
@@ -951,13 +977,12 @@ export type RightSidebarPanel =
 /**
  * Chat filter options - determines which sessions to show
  * - 'allChats': All sessions regardless of status
- * - 'flagged': Only flagged sessions
  * - 'state': Sessions with specific status ID
  */
 export type ChatFilter =
   | { kind: 'allChats' }
-  | { kind: 'flagged' }
   | { kind: 'state'; stateId: string }
+  | { kind: 'project'; projectId: string }
 
 /**
  * Settings subpage options
@@ -1019,6 +1044,15 @@ export interface CanvasNavigationState {
 }
 
 /**
+ * Board navigation state - kanban board of sessions grouped by todoState
+ */
+export interface BoardNavigationState {
+  navigator: 'board'
+  /** Optional right sidebar panel state */
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
  * Unified navigation state - single source of truth for all 3 panels
  *
  * From this state we can derive:
@@ -1026,12 +1060,31 @@ export interface CanvasNavigationState {
  * - NavigatorPanel: which list/content to show (from navigator)
  * - MainContentPanel: what details to display (from details or subpage)
  */
+/**
+ * Integrations navigation state - combined registry of sources and skills
+ */
+export interface IntegrationsNavigationState {
+  navigator: 'integrations'
+  rightSidebar?: RightSidebarPanel
+}
+
+/**
+ * Files navigation state - workspace file browser
+ */
+export interface FilesNavigationState {
+  navigator: 'files'
+  rightSidebar?: RightSidebarPanel
+}
+
 export type NavigationState =
   | ChatsNavigationState
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
   | CanvasNavigationState
+  | BoardNavigationState
+  | IntegrationsNavigationState
+  | FilesNavigationState
 
 /**
  * Type guard to check if state is chats navigation
@@ -1069,6 +1122,27 @@ export const isCanvasNavigation = (
 ): state is CanvasNavigationState => state.navigator === 'canvas'
 
 /**
+ * Type guard to check if state is board navigation
+ */
+export const isBoardNavigation = (
+  state: NavigationState
+): state is BoardNavigationState => state.navigator === 'board'
+
+/**
+ * Type guard to check if state is integrations navigation
+ */
+export const isIntegrationsNavigation = (
+  state: NavigationState
+): state is IntegrationsNavigationState => state.navigator === 'integrations'
+
+/**
+ * Type guard to check if state is files navigation
+ */
+export const isFilesNavigation = (
+  state: NavigationState
+): state is FilesNavigationState => state.navigator === 'files'
+
+/**
  * Default navigation state - allChats with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1099,10 +1173,20 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   if (state.navigator === 'canvas') {
     return 'canvas'
   }
+  if (state.navigator === 'board') {
+    return 'board'
+  }
+  if (state.navigator === 'integrations') {
+    return 'integrations'
+  }
+  if (state.navigator === 'files') {
+    return 'files'
+  }
   // Chats
   const f = state.filter
   let base: string
   if (f.kind === 'state') base = `state:${f.stateId}`
+  else if (f.kind === 'project') base = `project:${f.projectId}`
   else base = f.kind
   if (state.details) {
     return `${base}/chat/${state.details.sessionId}`
@@ -1125,8 +1209,24 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     return { navigator: 'sources', details: null }
   }
 
+  // Handle project folder views (project/{projectId} or project/{projectId}/chat/{sessionId})
+  if (key.startsWith('project/')) {
+    const parts = key.split('/')
+    const projectId = parts[1]
+    if (!projectId) return null
+    const sessionId = parts[2] === 'chat' ? parts[3] : undefined
+    return {
+      navigator: 'chats',
+      filter: { kind: 'project', projectId },
+      details: sessionId ? { type: 'chat', sessionId } : null,
+    }
+  }
+
   // Handle canvas
   if (key === 'canvas') return { navigator: 'canvas' }
+
+  // Handle files
+  if (key === 'files') return { navigator: 'files' }
 
   // Handle skills
   if (key === 'skills') return { navigator: 'skills', details: null }
@@ -1151,11 +1251,14 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
   const parseChatsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
     let filter: ChatFilter
     if (filterKey === 'allChats') filter = { kind: 'allChats' }
-    else if (filterKey === 'flagged') filter = { kind: 'flagged' }
     else if (filterKey.startsWith('state:')) {
       const stateId = filterKey.slice(6)
       if (!stateId) return null
       filter = { kind: 'state', stateId }
+    } else if (filterKey.startsWith('project:')) {
+      const projectId = filterKey.slice(8)
+      if (!projectId) return null
+      filter = { kind: 'project', projectId }
     } else {
       return null
     }

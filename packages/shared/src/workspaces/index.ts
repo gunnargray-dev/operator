@@ -7,6 +7,7 @@
 // Types
 export type {
   WorkspaceConfig,
+  ProjectFolder,
   CreateWorkspaceInput,
   LoadedWorkspace,
   WorkspaceSummary,

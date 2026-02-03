@@ -431,6 +431,42 @@ export interface BrowserErrorEvent {
 }
 
 /**
+ * Todo state changed event - session status changed
+ */
+export interface TodoStateChangedEvent {
+  type: 'todo_state_changed'
+  sessionId: string
+  todoState: TodoState
+}
+
+/**
+ * Schedule config changed event - schedule was updated
+ */
+export interface ScheduleConfigChangedEvent {
+  type: 'schedule_config_changed'
+  sessionId: string
+  scheduleConfig: import('@craft-agent/shared/sessions').ScheduleConfig
+}
+
+/**
+ * Favorite changed event - session favorite status toggled
+ */
+export interface FavoriteChangedEvent {
+  type: 'favorite_changed'
+  sessionId: string
+  isFavorited: boolean
+}
+
+/**
+ * Project changed event - session project assignment changed
+ */
+export interface ProjectChangedEvent {
+  type: 'project_changed'
+  sessionId: string
+  projectId: string | null
+}
+
+/**
  * Union of all agent events
  */
 export type AgentEvent =
@@ -473,6 +509,10 @@ export type AgentEvent =
   | BrowserControlChangedEvent
   | BrowserClosedEvent
   | BrowserErrorEvent
+  | TodoStateChangedEvent
+  | ScheduleConfigChangedEvent
+  | FavoriteChangedEvent
+  | ProjectChangedEvent
 
 /**
  * Side effects that need to be handled outside the pure processor

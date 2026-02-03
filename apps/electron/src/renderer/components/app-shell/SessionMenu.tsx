@@ -11,7 +11,6 @@
  * Provides consistent session actions:
  * - Share / Shared submenu
  * - Status submenu
- * - Flag/Unflag
  * - Mark as Unread
  * - Rename
  * - Open in New Window
@@ -23,8 +22,6 @@ import * as React from 'react'
 import {
   Trash2,
   Pencil,
-  Flag,
-  FlagOff,
   MailOpen,
   FolderOpen,
   Copy,
@@ -33,6 +30,12 @@ import {
   CloudUpload,
   Globe,
   RefreshCw,
+  Timer,
+  Star,
+  LayoutGrid,
+  FolderKanban,
+  Plus,
+  Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, isHexColor } from '@/lib/utils'
@@ -45,8 +48,6 @@ export interface SessionMenuProps {
   sessionId: string
   /** Session name for rename dialog */
   sessionName: string
-  /** Whether session is flagged */
-  isFlagged: boolean
   /** Shared URL if session is shared */
   sharedUrl?: string | null
   /** Whether session has messages */
@@ -57,13 +58,24 @@ export interface SessionMenuProps {
   currentTodoState: TodoStateId
   /** Available todo states */
   todoStates: TodoState[]
+  /** Whether session has an active schedule */
+  hasSchedule?: boolean
+  /** Whether session is favorited */
+  isFavorited?: boolean
+  /** Current project folder ID */
+  projectId?: string
+  /** Available project folders */
+  projectFolders?: { id: string; name: string; color?: string }[]
   /** Callbacks */
   onRename: () => void
-  onFlag: () => void
-  onUnflag: () => void
   onMarkUnread: () => void
+  onToggleFavorite?: () => void
   onTodoStateChange: (state: TodoStateId) => void
   onOpenInNewWindow: () => void
+  onConfigureSchedule?: () => void
+  onOpenInCanvas?: () => void
+  onMoveToProject?: (projectId: string | null) => void
+  onCreateProject?: () => void
   onDelete: () => void
 }
 
@@ -74,18 +86,24 @@ export interface SessionMenuProps {
 export function SessionMenu({
   sessionId,
   sessionName,
-  isFlagged,
   sharedUrl,
   hasMessages,
   hasUnreadMessages,
   currentTodoState,
   todoStates,
   onRename,
-  onFlag,
-  onUnflag,
   onMarkUnread,
+  onToggleFavorite,
   onTodoStateChange,
+  hasSchedule,
+  isFavorited,
+  projectId,
+  projectFolders,
   onOpenInNewWindow,
+  onConfigureSchedule,
+  onOpenInCanvas,
+  onMoveToProject,
+  onCreateProject,
   onDelete,
 }: SessionMenuProps) {
   // Share handlers
@@ -194,7 +212,7 @@ export function SessionMenu({
       )}
       <Separator />
 
-      {/* Status submenu - includes all statuses plus Flag/Unflag at the bottom */}
+      {/* Status submenu */}
       <Sub>
         <SubTrigger>
           <span
@@ -215,7 +233,7 @@ export function SessionMenu({
           <span className="flex-1">Status</span>
         </SubTrigger>
         <SubContent>
-          {todoStates.map((state) => {
+          {todoStates.filter(state => state.id !== 'cancelled').map((state) => {
             // Only apply color if icon is colorable (uses currentColor)
             const applyColor = state.iconColorable
             return (
@@ -238,22 +256,6 @@ export function SessionMenu({
               </MenuItem>
             )
           })}
-
-          {/* Separator before Flag/Unflag */}
-          <Separator />
-
-          {/* Flag/Unflag at the bottom of status menu */}
-          {!isFlagged ? (
-            <MenuItem onClick={onFlag}>
-              <Flag className="h-3.5 w-3.5 text-info" />
-              <span className="flex-1">Flag</span>
-            </MenuItem>
-          ) : (
-            <MenuItem onClick={onUnflag}>
-              <FlagOff className="h-3.5 w-3.5" />
-              <span className="flex-1">Unflag</span>
-            </MenuItem>
-          )}
         </SubContent>
       </Sub>
 
@@ -263,6 +265,54 @@ export function SessionMenu({
           <MailOpen className="h-3.5 w-3.5" />
           <span className="flex-1">Mark as Unread</span>
         </MenuItem>
+      )}
+
+      {/* Toggle Favorite */}
+      {onToggleFavorite && (
+        <MenuItem onClick={onToggleFavorite}>
+          <Star className={cn("h-3.5 w-3.5", isFavorited && "fill-current")} />
+          <span className="flex-1">{isFavorited ? 'Remove from Favorites' : 'Add to Favorites'}</span>
+        </MenuItem>
+      )}
+
+      {/* Move to Project */}
+      {onMoveToProject && (
+        <Sub>
+          <SubTrigger>
+            <FolderKanban className="h-3.5 w-3.5" />
+            <span className="flex-1">Move to Project</span>
+          </SubTrigger>
+          <SubContent>
+            {/* No project (remove from project) */}
+            <MenuItem onClick={() => onMoveToProject(null)} className={!projectId ? 'bg-foreground/5' : ''}>
+              <span className="h-3.5 w-3.5 flex items-center justify-center">
+                {!projectId && <Check className="h-3 w-3" />}
+              </span>
+              <span className="flex-1 text-muted-foreground">None</span>
+            </MenuItem>
+            {(projectFolders ?? []).map(folder => (
+              <MenuItem
+                key={folder.id}
+                onClick={() => onMoveToProject(folder.id)}
+                className={projectId === folder.id ? 'bg-foreground/5' : ''}
+              >
+                <span className="h-3.5 w-3.5 flex items-center justify-center">
+                  {projectId === folder.id && <Check className="h-3 w-3" />}
+                </span>
+                <span className="flex-1">{folder.name}</span>
+              </MenuItem>
+            ))}
+            {onCreateProject && (
+              <>
+                <Separator />
+                <MenuItem onClick={onCreateProject}>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span className="flex-1">New Project...</span>
+                </MenuItem>
+              </>
+            )}
+          </SubContent>
+        </Sub>
       )}
 
       <Separator />
@@ -279,6 +329,14 @@ export function SessionMenu({
         <span className="flex-1">Regenerate Title</span>
       </MenuItem>
 
+      {/* Configure Schedule */}
+      {onConfigureSchedule && (
+        <MenuItem onClick={onConfigureSchedule}>
+          <Timer className="h-3.5 w-3.5" />
+          <span className="flex-1">{hasSchedule ? 'Edit Schedule' : 'Configure Schedule'}</span>
+        </MenuItem>
+      )}
+
       <Separator />
 
       {/* Open in New Window */}
@@ -286,6 +344,14 @@ export function SessionMenu({
         <AppWindow className="h-3.5 w-3.5" />
         <span className="flex-1">Open in New Window</span>
       </MenuItem>
+
+      {/* Open in Canvas */}
+      {onOpenInCanvas && (
+        <MenuItem onClick={onOpenInCanvas}>
+          <LayoutGrid className="h-3.5 w-3.5" />
+          <span className="flex-1">Open in Canvas</span>
+        </MenuItem>
+      )}
 
       {/* View in Finder */}
       <MenuItem onClick={handleShowInFinder}>

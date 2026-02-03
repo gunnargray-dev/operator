@@ -197,6 +197,9 @@ const api: ElectronAPI = {
   deleteDraft: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_DELETE, sessionId),
   getAllDrafts: () => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_GET_ALL),
 
+  // File scanning
+  scanDirectory: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_DIRECTORY, dirPath),
+
   // Session Info Panel
   getSessionFiles: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_SESSION_FILES, sessionId),
   getSessionNotes: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_SESSION_NOTES, sessionId),
@@ -235,6 +238,16 @@ const api: ElectronAPI = {
   },
   getMcpTools: (workspaceId: string, sourceSlug: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_MCP_TOOLS, workspaceId, sourceSlug),
+
+  // Project folders
+  listProjectFolders: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_FOLDERS_LIST, workspaceId),
+  createProjectFolder: (workspaceId: string, name: string, color?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_FOLDERS_CREATE, workspaceId, name, color),
+  updateProjectFolder: (workspaceId: string, projectId: string, updates: { name?: string; color?: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_FOLDERS_UPDATE, workspaceId, projectId, updates),
+  deleteProjectFolder: (workspaceId: string, projectId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_FOLDERS_DELETE, workspaceId, projectId),
 
   // Status management
   listStatuses: (workspaceId: string) =>

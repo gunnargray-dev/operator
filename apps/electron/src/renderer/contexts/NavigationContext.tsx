@@ -57,6 +57,9 @@ import {
   isSettingsNavigation,
   isSkillsNavigation,
   isCanvasNavigation,
+  isBoardNavigation,
+  isIntegrationsNavigation,
+  isFilesNavigation,
   DEFAULT_NAVIGATION_STATE,
 } from '../../shared/types'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
@@ -69,7 +72,7 @@ export type { Route }
 
 // Re-export navigation state types for consumers
 export type { NavigationState, ChatFilter }
-export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isCanvasNavigation }
+export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isCanvasNavigation, isBoardNavigation, isIntegrationsNavigation, isFilesNavigation }
 
 interface NavigationContextValue {
   /** Navigate to a route */
@@ -157,8 +160,6 @@ export function NavigationProvider({
         switch (filter.kind) {
           case 'allChats':
             return true
-          case 'flagged':
-            return session.isFlagged === true
           case 'state':
             return session.todoState === filter.stateId
           default:
@@ -272,18 +273,6 @@ export function NavigationProvider({
           }
           break
 
-        case 'flag-session':
-          if (parsed.id) {
-            await window.electronAPI.sessionCommand(parsed.id, { type: 'flag' })
-          }
-          break
-
-        case 'unflag-session':
-          if (parsed.id) {
-            await window.electronAPI.sessionCommand(parsed.id, { type: 'unflag' })
-          }
-          break
-
         case 'oauth':
           if (parsed.id) {
             await window.electronAPI.startSourceOAuth(workspaceId, parsed.id)
@@ -383,6 +372,27 @@ export function NavigationProvider({
 
       // Canvas: no auto-selection needed
       if (isCanvasNavigation(newState)) {
+        setSession({ selected: null })
+        setNavigationState(newState)
+        return newState
+      }
+
+      // Board: no auto-selection needed
+      if (isBoardNavigation(newState)) {
+        setSession({ selected: null })
+        setNavigationState(newState)
+        return newState
+      }
+
+      // Integrations: no auto-selection needed
+      if (isIntegrationsNavigation(newState)) {
+        setSession({ selected: null })
+        setNavigationState(newState)
+        return newState
+      }
+
+      // Files: no auto-selection needed
+      if (isFilesNavigation(newState)) {
         setSession({ selected: null })
         setNavigationState(newState)
         return newState

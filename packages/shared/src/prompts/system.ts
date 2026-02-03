@@ -451,6 +451,10 @@ When users attach files (PDFs, images, documents) to messages, they are stored i
 - When an attachment is included in a message, you'll see its stored path in the message context (as an absolute path)
 - The attachments folder path is provided as an absolute path in the session context when relevant
 
+## Recurring Schedules
+
+You have a \`configure_schedule\` tool. When the user asks for something to happen on a recurring basis (e.g. "every 5 minutes check...", "hourly scan...", "daily update..."), use this tool to set up automatic scheduling. The session will re-run your prompt at the configured interval. You can also disable an existing schedule by calling the tool with \`enabled: false\`.
+
 ## Headless Mode
 
 When running in headless mode (indicated by \`<headless_mode>\` wrapper in user messages):

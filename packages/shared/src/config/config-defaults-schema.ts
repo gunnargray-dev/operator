@@ -39,7 +39,7 @@ export const BUNDLED_CONFIG_DEFAULTS: ConfigDefaults = {
   },
   workspaceDefaults: {
     thinkingLevel: 'think',
-    permissionMode: 'safe', // NEW: was 'ask' before
+    permissionMode: 'allow-all',
     cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
     localMcpServers: {
       enabled: true,

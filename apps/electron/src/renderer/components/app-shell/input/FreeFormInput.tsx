@@ -50,6 +50,7 @@ import { AttachmentPreview } from '../AttachmentPreview'
 import { MODELS, getModelShortName } from '@config/models'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
+import { PermissionModeDropdown } from '../ActiveOptionBadges'
 import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { PERMISSION_MODE_ORDER } from '@craft-agent/shared/agent/modes'
@@ -1040,18 +1041,17 @@ export function FreeFormInput({
           <EscapeInterruptOverlay isVisible={isProcessing && showEscapeOverlay} />
 
           <div className="flex items-center gap-1 px-2 py-2 border-t border-border/50">
-          {/* Context Badges - Files, Sources, Folder */}
+          {/* Context Badges - Icon-only with hover tooltips */}
           {/* 1. Attach Files Badge */}
           <FreeFormInputContextBadge
             icon={<Paperclip className="h-4 w-4" />}
-            // Show count ("1 file" / "X files") instead of filename for cleaner UI
             label={attachments.length > 0
               ? attachments.length === 1
                 ? "1 file"
                 : `${attachments.length} files`
               : "Attach Files"
             }
-            isExpanded={isEmptySession}
+            isExpanded={false}
             hasSelection={attachments.length > 0}
             showChevron={false}
             onClick={handleAttachClick}
@@ -1108,9 +1108,9 @@ export function FreeFormInput({
                         return `${enabledSources.length} sources`
                       })()
                 }
-                isExpanded={isEmptySession}
+                isExpanded={false}
                 hasSelection={optimisticSourceSlugs.length > 0}
-                showChevron={true}
+                showChevron={false}
                 isOpen={sourceDropdownOpen}
                 disabled={disabled}
                 data-tutorial="source-selector-button"
@@ -1226,6 +1226,17 @@ export function FreeFormInput({
               onWorkingDirectoryChange={onWorkingDirectoryChange}
               sessionFolderPath={sessionFolderPath}
               isEmptySession={isEmptySession}
+            />
+          )}
+
+          {/* 4. Permission Mode Selector */}
+          {permissionMode && onPermissionModeChange && (
+            <PermissionModeDropdown
+              permissionMode={permissionMode}
+              ultrathinkEnabled={ultrathinkEnabled}
+              onPermissionModeChange={onPermissionModeChange}
+              onUltrathinkChange={onUltrathinkChange}
+              compact
             />
           )}
 
@@ -1530,9 +1541,9 @@ function WorkingDirectoryBadge({
           <FreeFormInputContextBadge
             icon={<Icon_Folder className="h-4 w-4" strokeWidth={1.75} />}
             label={folderName}
-            isExpanded={isEmptySession}
+            isExpanded={false}
             hasSelection={hasFolder}
-            showChevron={true}
+            showChevron={false}
             isOpen={popoverOpen}
             tooltip={
               hasFolder ? (

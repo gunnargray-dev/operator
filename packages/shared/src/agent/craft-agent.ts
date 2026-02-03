@@ -433,6 +433,9 @@ export class CraftAgent {
   // Returns command result (success/error, screenshot data, etc.)
   public onBrowserCommand: ((command: import('./session-scoped-tools').BrowserCommand) => Promise<import('./session-scoped-tools').BrowserCommandResult>) | null = null;
 
+  // Callback when agent configures a schedule for this session
+  public onScheduleConfigured: ((config: import('../sessions/types.ts').ScheduleConfig) => void) | null = null;
+
   // Callback for artifact events from create_artifact/update_artifact tools
   // Triggers Canvas UI updates
   public onArtifactEvent: ((event: import('./session-scoped-tools').ArtifactEvent) => void) | null = null;
@@ -488,6 +491,10 @@ export class CraftAgent {
       onArtifactEvent: (event) => {
         this.onDebug?.(`[CraftAgent] onArtifactEvent received: ${event.type} ${event.artifactId}`);
         this.onArtifactEvent?.(event);
+      },
+      onScheduleConfigured: (config) => {
+        this.onDebug?.(`[CraftAgent] onScheduleConfigured received: interval=${config.intervalMs}ms enabled=${config.enabled}`);
+        this.onScheduleConfigured?.(config);
       },
     });
 
@@ -3424,6 +3431,7 @@ Please continue the conversation naturally from where we left off.
     this.onDebug = null;
     this.onPlanSubmitted = null;
     this.onAuthRequest = null;
+    this.onScheduleConfigured = null;
     this.onSourceChange = null;
     this.onSourcesListChange = null;
     this.onConfigValidationError = null;

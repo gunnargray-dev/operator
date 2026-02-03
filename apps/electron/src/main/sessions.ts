@@ -21,8 +21,6 @@ import {
   saveSession as saveStoredSession,
   createSession as createStoredSession,
   deleteSession as deleteStoredSession,
-  flagSession as flagStoredSession,
-  unflagSession as unflagStoredSession,
   setSessionTodoState as setStoredSessionTodoState,
   updateSessionMetadata,
   setPendingPlanExecution as setStoredPendingPlanExecution,
@@ -49,6 +47,7 @@ import { DEFAULT_MODEL } from '@craft-agent/shared/config'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { BrowserInstance, type BrowserCommandResult } from '@craft-agent/shared/browser'
 import type { BrowserCommand, BrowserControlState } from '../shared/types'
+import { TaskScheduler } from './scheduler'
 
 /**
  * Sanitize message content for use as session title.
@@ -147,7 +146,6 @@ interface ManagedSession {
   pendingTextParent?: string
   // Session name (user-defined or AI-generated)
   name?: string
-  isFlagged: boolean
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   // SDK session ID for conversation continuity
@@ -164,9 +162,14 @@ interface ManagedSession {
     /** Model's context window size in tokens (from SDK modelUsage) */
     contextWindow?: number
   }
-  // Todo state (user-controlled) - determines open vs closed
-  // Dynamic status ID referencing workspace status config
+  // Todo state - determines open vs closed, auto-managed for scheduled tasks
   todoState?: string
+  // Schedule configuration for recurring autonomous tasks
+  scheduleConfig?: import('@craft-agent/shared/sessions').ScheduleConfig
+  // Whether this session is favorited
+  isFavorited?: boolean
+  // Project folder ID this session belongs to
+  projectId?: string
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
   // Per-session source selection (slugs of enabled sources)
@@ -326,6 +329,40 @@ export class SessionManager {
   private pendingCredentialResolvers: Map<string, (response: import('../shared/types').CredentialResponse) => void> = new Map()
   // Promise deduplication for lazy-loading messages (prevents race conditions)
   private messageLoadingPromises: Map<string, Promise<void>> = new Map()
+  // Task scheduler for recurring autonomous tasks
+  private scheduler: TaskScheduler
+
+  constructor() {
+    this.scheduler = new TaskScheduler({
+      getSessions: () => this.getSessions().map(s => ({
+        id: s.id,
+        todoState: s.todoState,
+        scheduleConfig: s.scheduleConfig,
+      })),
+      setTodoState: (id, state) => this.setTodoState(id, state),
+      sendMessage: (id, msg) => this.sendMessage(id, msg),
+      getSession: async (id) => {
+        const s = await this.getSession(id)
+        return s ? { id: s.id, todoState: s.todoState, scheduleConfig: s.scheduleConfig } : null
+      },
+      updateScheduleConfig: (id, config) => this.updateScheduleConfig(id, config),
+    })
+  }
+
+  /** Get the task scheduler instance */
+  getScheduler(): TaskScheduler {
+    return this.scheduler
+  }
+
+  /** Initialize the task scheduler after sessions are loaded */
+  initializeScheduler(): void {
+    this.scheduler.initialize()
+  }
+
+  /** Shutdown the task scheduler */
+  shutdownScheduler(): void {
+    this.scheduler.shutdown()
+  }
 
   setWindowManager(wm: WindowManager): void {
     this.windowManager = wm
@@ -623,11 +660,13 @@ export class SessionManager {
             pendingTextParent: undefined,
             name: meta.name,
             preview: meta.preview,
-            isFlagged: meta.isFlagged ?? false,
             permissionMode: meta.permissionMode,
             sdkSessionId: meta.sdkSessionId,
             tokenUsage: undefined,  // Loaded with messages
             todoState: meta.todoState,
+            scheduleConfig: meta.scheduleConfig,
+            isFavorited: meta.isFavorited,
+            projectId: meta.projectId,
             lastReadMessageId: undefined,  // Loaded with messages
             enabledSourceSlugs: undefined,  // Loaded with messages
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
@@ -670,9 +709,9 @@ export class SessionManager {
         createdAt: managed.lastMessageAt,  // Approximate, will be overwritten if already exists
         lastUsedAt: Date.now(),
         sdkSessionId: managed.sdkSessionId,
-        isFlagged: managed.isFlagged,
         permissionMode: managed.permissionMode,
         todoState: managed.todoState,
+        scheduleConfig: managed.scheduleConfig,
         enabledSourceSlugs: managed.enabledSourceSlugs,
         workingDirectory: managed.workingDirectory,
         sdkCwd: managed.sdkCwd,
@@ -989,10 +1028,11 @@ export class SessionManager {
         lastMessageAt: m.lastMessageAt,
         messages: [],  // Never send all messages - use getSession(id) for specific session
         isProcessing: m.isProcessing,
-        isFlagged: m.isFlagged,
         permissionMode: m.permissionMode,
         thinkingLevel: m.thinkingLevel,
         todoState: m.todoState,
+        isFavorited: m.isFavorited,
+        projectId: m.projectId,
         lastReadMessageId: m.lastReadMessageId,
         workingDirectory: m.workingDirectory,
         model: m.model,
@@ -1025,7 +1065,9 @@ export class SessionManager {
       lastMessageAt: m.lastMessageAt,
       messages: m.messages,
       isProcessing: m.isProcessing,
-      isFlagged: m.isFlagged,
+      scheduleConfig: m.scheduleConfig,
+      isFavorited: m.isFavorited,
+      projectId: m.projectId,
       permissionMode: m.permissionMode,
       thinkingLevel: m.thinkingLevel,
       todoState: m.todoState,
@@ -1094,6 +1136,11 @@ export class SessionManager {
     return getSessionStoragePath(managed.workspace.rootPath, sessionId)
   }
 
+  getSessionWorkingDirectory(sessionId: string): string | undefined {
+    const managed = this.sessions.get(sessionId)
+    return managed?.workingDirectory
+  }
+
   async createSession(workspaceId: string, options?: import('../shared/types').CreateSessionOptions): Promise<Session> {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
@@ -1146,7 +1193,6 @@ export class SessionManager {
       parentToolStack: [],
       toolToParentMap: new Map(),
       pendingTextParent: undefined,
-      isFlagged: false,
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
       sdkCwd: storedSession.sdkCwd,
@@ -1166,7 +1212,6 @@ export class SessionManager {
       lastMessageAt: managed.lastMessageAt,
       messages: [],
       isProcessing: false,
-      isFlagged: false,
       permissionMode: defaultPermissionMode,
       todoState: undefined,  // User-controlled, defaults to undefined (treated as 'todo')
       workingDirectory: resolvedWorkingDir,
@@ -1252,6 +1297,12 @@ export class SessionManager {
             sessionId: managed.id,
           }
         }, managed.workspace.id)
+
+        // Auto-transition scheduled tasks to needs-review when permission is needed
+        if (managed.scheduleConfig?.enabled && managed.todoState === 'todo') {
+          void this.setTodoState(managed.id, 'needs-review')
+          this.scheduler.onTaskNeedsInput(managed.id)
+        }
       }
 
       // Note: Credential requests now flow through onAuthRequest (unified auth flow)
@@ -1589,42 +1640,82 @@ export class SessionManager {
         }
       }
 
+      // Wire up onScheduleConfigured to activate the task scheduler from agent tool calls
+      managed.agent.onScheduleConfigured = (config) => {
+        sessionLog.info(`Schedule configured for session ${managed.id}: interval=${config.intervalMs}ms enabled=${config.enabled}`)
+        this.updateScheduleConfig(managed.id, config)
+        if (config.enabled) {
+          void this.setTodoState(managed.id, 'backlog')
+          this.scheduler.scheduleSession(managed.id, config)
+        } else {
+          this.scheduler.unscheduleSession(managed.id)
+        }
+      }
+
       end()
     }
     return managed.agent
   }
 
-  async flagSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isFlagged = true
-      const workspaceRootPath = managed.workspace.rootPath
-      flagStoredSession(workspaceRootPath, sessionId)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_flagged', sessionId }, managed.workspace.id)
-    }
-  }
-
-  async unflagSession(sessionId: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      managed.isFlagged = false
-      const workspaceRootPath = managed.workspace.rootPath
-      unflagStoredSession(workspaceRootPath, sessionId)
-      // Notify all windows for this workspace
-      this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
-    }
-  }
-
   async setTodoState(sessionId: string, todoState: TodoState): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
+      const prevState = managed.todoState
       managed.todoState = todoState
       const workspaceRootPath = managed.workspace.rootPath
       setStoredSessionTodoState(workspaceRootPath, sessionId, todoState)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'todo_state_changed', sessionId, todoState }, managed.workspace.id)
+
+      // Handle manual drag override for scheduled tasks
+      if (managed.scheduleConfig?.enabled) {
+        if ((todoState === 'done' || todoState === 'cancelled') && prevState === 'backlog') {
+          // Manually moved out of backlog → unschedule
+          this.scheduler.unscheduleSession(sessionId)
+        } else if (todoState === 'backlog' && prevState !== 'backlog') {
+          // Manually moved back to backlog → reschedule
+          this.scheduler.scheduleSession(sessionId, managed.scheduleConfig)
+        }
+      }
     }
+  }
+
+  /**
+   * Update schedule config for a session and persist it.
+   */
+  updateScheduleConfig(sessionId: string, config: import('@craft-agent/shared/sessions').ScheduleConfig): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    managed.scheduleConfig = config
+    updateSessionMetadata(managed.workspace.rootPath, sessionId, { scheduleConfig: config })
+    this.sendEvent({ type: 'schedule_config_changed', sessionId, scheduleConfig: config }, managed.workspace.id)
+  }
+
+  /**
+   * Toggle favorite status for a session and persist it.
+   */
+  toggleFavorite(sessionId: string): boolean {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return false
+
+    const newValue = !managed.isFavorited
+    managed.isFavorited = newValue
+    updateSessionMetadata(managed.workspace.rootPath, sessionId, { isFavorited: newValue })
+    this.sendEvent({ type: 'favorite_changed', sessionId, isFavorited: newValue }, managed.workspace.id)
+    return newValue
+  }
+
+  /**
+   * Set or clear the project folder for a session.
+   */
+  setProjectId(sessionId: string, projectId: string | null): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    managed.projectId = projectId ?? undefined
+    updateSessionMetadata(managed.workspace.rootPath, sessionId, { projectId: projectId ?? undefined })
+    this.sendEvent({ type: 'project_changed', sessionId, projectId }, managed.workspace.id)
   }
 
   // ============================================
@@ -2154,6 +2245,12 @@ export class SessionManager {
       throw new Error(`Session ${sessionId} not found`)
     }
 
+    // Auto-resume scheduled tasks from needs-review when user sends a message
+    if (managed.scheduleConfig?.enabled && managed.todoState === 'needs-review') {
+      void this.setTodoState(sessionId, 'todo')
+      this.scheduler.onTaskResumed(sessionId)
+    }
+
     // Clear any pending plan execution state when a new user message is sent.
     // This acts as a safety valve - if the user moves on, we don't want to
     // auto-execute an old plan later.
@@ -2521,6 +2618,44 @@ export class SessionManager {
     } else {
       // No queue - emit complete to UI (include tokenUsage for real-time updates)
       this.sendEvent({ type: 'complete', sessionId, tokenUsage: managed.tokenUsage }, managed.workspace.id)
+
+      // 2b. Auto-transitions for scheduled tasks
+      if (managed.scheduleConfig?.enabled) {
+        if (reason === 'complete') {
+          // Agent completed → move to done, update config
+          void this.setTodoState(sessionId, 'done')
+          this.updateScheduleConfig(sessionId, {
+            ...managed.scheduleConfig,
+            lastExecutedAt: Date.now(),
+            errorCount: 0,
+          })
+          this.scheduler.onTaskCompleted(sessionId)
+        } else if (reason === 'error') {
+          const newErrorCount = (managed.scheduleConfig.errorCount || 0) + 1
+          const maxErrors = managed.scheduleConfig.maxErrors || 5
+
+          if (newErrorCount >= maxErrors) {
+            // Too many errors → disable and move to needs-review
+            this.updateScheduleConfig(sessionId, {
+              ...managed.scheduleConfig,
+              errorCount: newErrorCount,
+              lastExecutedAt: Date.now(),
+              enabled: false,
+            })
+            void this.setTodoState(sessionId, 'needs-review')
+            this.scheduler.unscheduleSession(sessionId)
+          } else {
+            // Under threshold → return to backlog for retry
+            this.updateScheduleConfig(sessionId, {
+              ...managed.scheduleConfig,
+              errorCount: newErrorCount,
+              lastExecutedAt: Date.now(),
+            })
+            void this.setTodoState(sessionId, 'backlog')
+          }
+          this.scheduler.onTaskError(sessionId)
+        }
+      }
     }
 
     // 3. Always persist
@@ -2683,6 +2818,13 @@ To view this task's output:
     if (managed?.agent) {
       sessionLog.info(`Permission response for ${requestId}: allowed=${allowed}, alwaysAllow=${alwaysAllow}`)
       managed.agent.respondToPermission(requestId, allowed, alwaysAllow)
+
+      // Auto-resume scheduled tasks from needs-review back to active
+      if (managed.scheduleConfig?.enabled && managed.todoState === 'needs-review') {
+        void this.setTodoState(sessionId, 'todo')
+        this.scheduler.onTaskResumed(sessionId)
+      }
+
       return true
     } else {
       sessionLog.warn(`Cannot respond to permission - no agent for session ${sessionId}`)

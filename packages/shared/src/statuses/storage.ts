@@ -34,7 +34,7 @@ const STATUS_ICONS_DIR = 'statuses/icons';
 export function getDefaultStatusConfig(): WorkspaceStatusConfig {
   // Note: color is omitted - the renderer applies design system defaults:
   // - backlog: text-foreground/50 (muted, not yet planned)
-  // - todo: text-foreground (solid, ready to work on)
+  // - todo (Active): text-foreground (solid, active work)
   // - needs-review: text-info (amber, attention needed)
   // - done: text-accent (purple, completed)
   // - cancelled: text-foreground/50 (muted, inactive)
@@ -45,7 +45,7 @@ export function getDefaultStatusConfig(): WorkspaceStatusConfig {
     statuses: [
       {
         id: 'backlog',
-        label: 'Backlog',
+        label: 'Tasks',
         category: 'open',
         isFixed: false,
         isDefault: true,
@@ -53,7 +53,7 @@ export function getDefaultStatusConfig(): WorkspaceStatusConfig {
       },
       {
         id: 'todo',
-        label: 'Todo',
+        label: 'Active',
         category: 'open',
         isFixed: true,
         isDefault: false,
@@ -61,7 +61,7 @@ export function getDefaultStatusConfig(): WorkspaceStatusConfig {
       },
       {
         id: 'needs-review',
-        label: 'Needs Review',
+        label: 'Needs Input',
         category: 'open',
         isFixed: false,
         isDefault: true,
@@ -148,6 +148,30 @@ export function loadStatusConfig(workspaceRootPath: string): WorkspaceStatusConf
     if (!validateStatusConfig(config)) {
       console.warn('[loadStatusConfig] Invalid config: missing required fixed statuses, returning defaults');
       return getDefaultStatusConfig();
+    }
+
+    // Migrate old labels to new defaults
+    const labelMigrations: Record<string, string> = {
+      'backlog': 'Tasks',
+      'todo': 'Active',
+      'needs-review': 'Needs Input',
+    };
+    const oldLabels: Record<string, string> = {
+      'backlog': 'Backlog',
+      'todo': 'Todo',
+      'needs-review': 'Needs Review',
+    };
+    let migrated = false;
+    for (const status of config.statuses) {
+      const newLabel = labelMigrations[status.id];
+      const oldLabel = oldLabels[status.id];
+      if (newLabel && oldLabel && status.label === oldLabel) {
+        status.label = newLabel;
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      saveStatusConfig(workspaceRootPath, config);
     }
 
     return config;

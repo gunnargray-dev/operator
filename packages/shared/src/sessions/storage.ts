@@ -361,8 +361,10 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       messageCount: header.messageCount,
       preview: header.preview,
       sdkSessionId: header.sdkSessionId,
-      isFlagged: header.isFlagged,
       todoState: validatedTodoState,
+      scheduleConfig: header.scheduleConfig,
+      isFavorited: header.isFavorited,
+      projectId: header.projectId,
       permissionMode: header.permissionMode,
       planCount: planCount > 0 ? planCount : undefined,
       lastMessageRole: header.lastMessageRole,
@@ -464,9 +466,11 @@ export function updateSessionMetadata(
   workspaceRootPath: string,
   sessionId: string,
   updates: Partial<Pick<SessionConfig,
-    | 'isFlagged'
     | 'name'
     | 'todoState'
+    | 'scheduleConfig'
+    | 'isFavorited'
+    | 'projectId'
     | 'lastReadMessageId'
     | 'enabledSourceSlugs'
     | 'workingDirectory'
@@ -479,7 +483,6 @@ export function updateSessionMetadata(
   const session = loadSession(workspaceRootPath, sessionId);
   if (!session) return;
 
-  if (updates.isFlagged !== undefined) session.isFlagged = updates.isFlagged;
   if (updates.name !== undefined) session.name = updates.name;
   if (updates.todoState !== undefined) session.todoState = updates.todoState;
   if (updates.enabledSourceSlugs !== undefined) session.enabledSourceSlugs = updates.enabledSourceSlugs;
@@ -489,22 +492,11 @@ export function updateSessionMetadata(
   if ('sharedUrl' in updates) session.sharedUrl = updates.sharedUrl;
   if ('sharedId' in updates) session.sharedId = updates.sharedId;
   if (updates.model !== undefined) session.model = updates.model;
+  if (updates.scheduleConfig !== undefined) session.scheduleConfig = updates.scheduleConfig;
+  if (updates.isFavorited !== undefined) session.isFavorited = updates.isFavorited;
+  if ('projectId' in updates) session.projectId = updates.projectId;
 
   saveSession(session);
-}
-
-/**
- * Flag a session
- */
-export function flagSession(workspaceRootPath: string, sessionId: string): void {
-  updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: true });
-}
-
-/**
- * Unflag a session
- */
-export function unflagSession(workspaceRootPath: string, sessionId: string): void {
-  updateSessionMetadata(workspaceRootPath, sessionId, { isFlagged: false });
 }
 
 /**
@@ -589,13 +581,6 @@ export function getPendingPlanExecution(
 // ============================================================
 // Session Filtering
 // ============================================================
-
-/**
- * List flagged sessions
- */
-export function listFlaggedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listSessions(workspaceRootPath).filter(s => s.isFlagged === true);
-}
 
 /**
  * List completed sessions (category: closed)
