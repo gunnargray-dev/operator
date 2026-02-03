@@ -9,6 +9,7 @@ export { default as CanvasPage } from './CanvasPage'
 export { default as BoardPage } from './BoardPage'
 export { default as IntegrationsPage } from './IntegrationsPage'
 export { default as FilesPage } from './FilesPage'
+export { default as PulsePage } from './PulsePage'
 export { default as SourceInfoPage } from './SourceInfoPage'
 
 // Settings pages

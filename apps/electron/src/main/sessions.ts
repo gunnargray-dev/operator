@@ -214,6 +214,8 @@ interface ManagedSession {
   pendingAuthRequest?: AuthRequest
   // Browser instance for Manus-like browser control
   browserInstance?: BrowserInstance
+  // Number of completed tool use steps (for displaying in activity view)
+  stepCount: number
 }
 
 // Convert runtime Message to StoredMessage for persistence
@@ -682,6 +684,7 @@ export class SessionManager {
             // Shared viewer state - loaded from metadata for persistence across restarts
             sharedUrl: meta.sharedUrl,
             sharedId: meta.sharedId,
+            stepCount: 0,  // Will be computed when messages are loaded
           }
 
           this.sessions.set(meta.id, managed)
@@ -837,6 +840,7 @@ export class SessionManager {
         todoState: managed.todoState,
         isFavorited: managed.isFavorited,
         projectId: managed.projectId,
+        stepCount: managed.stepCount,
         tokenUsage: managed.tokenUsage ? {
           inputTokens: managed.tokenUsage.inputTokens,
           outputTokens: managed.tokenUsage.outputTokens,
@@ -1105,6 +1109,7 @@ export class SessionManager {
         sharedUrl: m.sharedUrl,
         sharedId: m.sharedId,
         lastMessageRole: m.lastMessageRole,
+        stepCount: m.stepCount,
       }))
       .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
   }
@@ -1145,6 +1150,7 @@ export class SessionManager {
       sharedId: m.sharedId,
       lastMessageRole: m.lastMessageRole,
       tokenUsage: m.tokenUsage,
+      stepCount: m.stepCount,
     }
   }
 
@@ -1187,9 +1193,28 @@ export class SessionManager {
       managed.sharedId = storedSession.sharedId
       // Sync name from disk - ensures title persistence across lazy loading
       managed.name = storedSession.name
+      // Compute stepCount from loaded messages
+      managed.stepCount = this.countToolUseSteps(managed.messages)
       sessionLog.debug(`Lazy-loaded ${managed.messages.length} messages for session ${managed.id}`)
     }
     managed.messagesLoaded = true
+  }
+
+  /**
+   * Count tool_use content blocks in messages (for step count display)
+   */
+  private countToolUseSteps(messages: Message[]): number {
+    let count = 0
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_use') {
+            count++
+          }
+        }
+      }
+    }
+    return count
   }
 
   /**
@@ -1266,6 +1291,7 @@ export class SessionManager {
       messageQueue: [],
       backgroundShellCommands: new Map(),
       messagesLoaded: true,  // New sessions don't need to load messages from disk
+      stepCount: 0,
     }
 
     this.sessions.set(storedSession.id, managed)
@@ -1283,6 +1309,7 @@ export class SessionManager {
       model: managed.model,
       thinkingLevel: defaultThinkingLevel,
       sessionFolderPath: getSessionStoragePath(workspaceRootPath, storedSession.id),
+      stepCount: 0,
     }
   }
 
@@ -3146,6 +3173,8 @@ To view this task's output:
             parentToolUseId,
           }
           managed.messages.push(toolStartMessage)
+          // Increment step count for new tool uses
+          managed.stepCount++
         }
 
         // Send event to renderer on first occurrence OR when input data is updated

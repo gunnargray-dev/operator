@@ -33,7 +33,7 @@ export interface ParsedRoute {
 // Compound Route Types (new format)
 // =============================================================================
 
-export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas' | 'board' | 'integrations' | 'files'
+export type NavigatorType = 'chats' | 'sources' | 'skills' | 'settings' | 'canvas' | 'board' | 'integrations' | 'files' | 'pulse'
 
 export interface ParsedCompoundRoute {
   /** The navigator type */
@@ -55,7 +55,7 @@ export interface ParsedCompoundRoute {
  * Known prefixes that indicate a compound route
  */
 const COMPOUND_ROUTE_PREFIXES = [
-  'allChats', 'state', 'project', 'sources', 'skills', 'settings', 'canvas', 'board', 'integrations', 'files'
+  'allChats', 'state', 'project', 'sources', 'skills', 'settings', 'canvas', 'board', 'integrations', 'files', 'pulse'
 ]
 
 /**
@@ -148,6 +148,11 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
     return { navigator: 'files' as NavigatorType, details: null }
   }
 
+  // Pulse navigator
+  if (first === 'pulse') {
+    return { navigator: 'pulse' as NavigatorType, details: null }
+  }
+
   // Chats navigator (allChats, state, project)
   let chatFilter: ChatFilter
   let detailsStartIndex: number
@@ -225,6 +230,10 @@ export function buildCompoundRoute(parsed: ParsedCompoundRoute): string {
 
   if (parsed.navigator === 'files') {
     return 'files'
+  }
+
+  if (parsed.navigator === 'pulse') {
+    return 'pulse'
   }
 
   // Chats navigator
@@ -346,6 +355,11 @@ function convertCompoundToViewRoute(compound: ParsedCompoundRoute): ParsedRoute 
   // Integrations
   if (compound.navigator === 'integrations') {
     return { type: 'view', name: 'integrations', params: {} }
+  }
+
+  // Pulse
+  if (compound.navigator === 'pulse') {
+    return { type: 'view', name: 'pulse', params: {} }
   }
 
   // Chats
@@ -479,6 +493,11 @@ function convertCompoundToNavigationState(compound: ParsedCompoundRoute): Naviga
     return { navigator: 'files' }
   }
 
+  // Pulse
+  if (compound.navigator === 'pulse') {
+    return { navigator: 'pulse' }
+  }
+
   // Chats
   const filter = compound.chatFilter || { kind: 'allChats' as const }
   if (compound.details) {
@@ -592,6 +611,8 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
       return { navigator: 'integrations' }
     case 'files':
       return { navigator: 'files' }
+    case 'pulse':
+      return { navigator: 'pulse' }
     default:
       return null
   }
@@ -633,6 +654,10 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
 
   if (state.navigator === 'files') {
     return 'files'
+  }
+
+  if (state.navigator === 'pulse') {
+    return 'pulse'
   }
 
   // Chats

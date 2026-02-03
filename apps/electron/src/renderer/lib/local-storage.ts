@@ -23,6 +23,7 @@ export const KEYS = {
   rightSidebarVisible: 'right-sidebar-visible',
   rightSidebarWidth: 'right-sidebar-width',
   sessionInfoMetadataHeight: 'session-info-metadata-height', // Height of metadata section in session info panel
+  taskDetailMessagesHeight: 'task-detail-messages-height', // Height ratio of messages section in task detail panel
   sessionFilesExpandedFolders: 'session-files-expanded', // Expanded folders in session files tree (keyed by sessionId)
 
   // Theme
@@ -36,6 +37,9 @@ export const KEYS = {
 
   // Working directory
   recentWorkingDirs: 'recent-working-dirs',
+
+  // Pulse view
+  lastPulseViewedAt: 'last-pulse-viewed-at',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]

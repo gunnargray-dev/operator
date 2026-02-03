@@ -58,6 +58,8 @@ export interface SessionMeta {
   lastAssistantPreview?: string
   /** Current step/action when processing (e.g., "Searching web...", "Reading files...") */
   currentStep?: string
+  /** Number of completed tool use steps in this session */
+  stepCount?: number
 }
 
 /**
@@ -106,12 +108,33 @@ function extractLastAssistantPreview(messages: Message[], maxLength = 200): stri
 }
 
 /**
+ * Count completed tool use steps in messages
+ * Counts tool_use content blocks in assistant messages
+ */
+function countToolUseSteps(messages: Message[]): number {
+  let count = 0
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'tool_use') {
+          count++
+        }
+      }
+    }
+  }
+  return count
+}
+
+/**
  * Extract metadata from a full session object
  */
 export function extractSessionMeta(session: Session): SessionMeta {
   const messages = session.messages || []
   const lastFinalMessageId = findLastFinalMessageId(messages)
   const lastAssistantPreview = extractLastAssistantPreview(messages)
+  // Prefer session.stepCount from main process (available even when messages aren't loaded)
+  // Fall back to computing from messages if available
+  const stepCount = session.stepCount ?? countToolUseSteps(messages)
 
   return {
     id: session.id,
@@ -141,6 +164,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
       costUsd: session.tokenUsage.costUsd,
     } : undefined,
     lastAssistantPreview,
+    stepCount: stepCount > 0 ? stepCount : undefined,
   }
 }
 

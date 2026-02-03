@@ -117,6 +117,16 @@ export interface AppShellContextType {
 
   // Right sidebar button (for page headers)
   rightSidebarButton?: React.ReactNode
+
+  // Right sidebar control (for canvas/activity view)
+  /** Open the right sidebar with a specific session */
+  openRightSidebar?: (sessionId: string) => void
+  /** Close the right sidebar */
+  closeRightSidebar?: () => void
+  /** Whether the right sidebar is currently visible */
+  isRightSidebarVisible?: boolean
+  /** The session ID currently shown in the right sidebar (if any) */
+  rightSidebarSessionId?: string | null
 }
 
 const AppShellContext = createContext<AppShellContextType | null>(null)

@@ -64,7 +64,7 @@ export default function WorkspaceSettingsPage() {
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Mode cycling state
-  const [enabledModes, setEnabledModes] = useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
+  const [enabledModes, setEnabledModes] = useState<PermissionMode[]>(['ask', 'allow-all'])
   const [modeCyclingError, setModeCyclingError] = useState<string | null>(null)
 
   // Load workspace settings when active workspace changes

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { isToday, isYesterday, format, startOfDay } from "date-fns"
-import { MoreHorizontal, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Star, Timer } from "lucide-react"
+import { MoreHorizontal, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw, Star, Timer, Square, Play, Clock, CheckCircle2, AlertCircle, Circle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn, isHexColor } from "@/lib/utils"
@@ -131,6 +131,70 @@ function hasUnreadMessages(session: SessionMeta): boolean {
  */
 function hasMessages(session: SessionMeta): boolean {
   return !!(session.name || session.preview || session.lastFinalMessageId)
+}
+
+/**
+ * Instance status for cloud console view
+ */
+type InstanceStatus = 'running' | 'scheduled' | 'waiting' | 'complete' | 'idle'
+
+/**
+ * Get instance status for cloud console display
+ */
+function getInstanceStatus(session: SessionMeta): InstanceStatus {
+  if (session.isProcessing) return 'running'
+  if (session.scheduleConfig?.enabled) return 'scheduled'
+  if (session.lastMessageRole === 'plan') return 'waiting'
+  if (hasMessages(session)) return 'complete'
+  return 'idle'
+}
+
+/**
+ * Get status display config
+ */
+function getStatusConfig(status: InstanceStatus) {
+  switch (status) {
+    case 'running':
+      return {
+        label: 'Running',
+        icon: Loader2,
+        className: 'text-success',
+        bgClassName: 'bg-success/10',
+        animate: true,
+      }
+    case 'scheduled':
+      return {
+        label: 'Scheduled',
+        icon: Clock,
+        className: 'text-info',
+        bgClassName: 'bg-info/10',
+        animate: false,
+      }
+    case 'waiting':
+      return {
+        label: 'Needs Input',
+        icon: AlertCircle,
+        className: 'text-warning',
+        bgClassName: 'bg-warning/10',
+        animate: false,
+      }
+    case 'complete':
+      return {
+        label: 'Complete',
+        icon: CheckCircle2,
+        className: 'text-foreground/40',
+        bgClassName: 'bg-foreground/5',
+        animate: false,
+      }
+    case 'idle':
+      return {
+        label: 'Idle',
+        icon: Circle,
+        className: 'text-foreground/30',
+        bgClassName: 'bg-foreground/5',
+        animate: false,
+      }
+  }
 }
 
 /**
@@ -299,124 +363,149 @@ function SessionItem({
             />
           </PopoverContent>
         </Popover>
-        {/* Main content button */}
-        <button
-          {...itemProps}
-          className={cn(
-            "flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm outline-none rounded-[8px]",
-            // Fast hover transition (75ms vs default 150ms), selection is instant
-            "transition-[background-color] duration-75",
-            isSelected
-              ? "bg-foreground/5 hover:bg-foreground/7"
-              : "hover:bg-foreground/2"
-          )}
-          onMouseDown={handleClick}
-          onKeyDown={(e) => {
-            itemProps.onKeyDown(e)
-            onKeyDown(e, item)
-          }}
-        >
-          {/* Spacer for todo icon */}
-          <div className="w-4 h-5 shrink-0" />
-          {/* Content column */}
-          <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-            {/* Title - up to 2 lines, with shimmer during async operations (sharing, title regen, etc.) */}
-            <div className="flex items-start gap-2 w-full pr-6 min-w-0">
+        {/* Main content button - Cloud console style */}
+        {(() => {
+          const status = getInstanceStatus(item)
+          const statusConfig = getStatusConfig(status)
+          const StatusIcon = statusConfig.icon
+
+          return (
+            <button
+              {...itemProps}
+              className={cn(
+                "flex w-full items-start gap-3 px-3 py-3 text-left text-sm outline-none rounded-lg",
+                "border border-transparent",
+                "transition-all duration-75",
+                isSelected
+                  ? "bg-foreground/5 border-border/50"
+                  : "hover:bg-foreground/3 hover:border-border/30"
+              )}
+              onMouseDown={handleClick}
+              onKeyDown={(e) => {
+                itemProps.onKeyDown(e)
+                onKeyDown(e, item)
+              }}
+            >
+              {/* Status indicator - cloud console style */}
               <div className={cn(
-                "font-medium font-sans line-clamp-2 min-w-0 -mb-[2px]",
-                item.isAsyncOperationOngoing && "animate-shimmer-text"
+                "shrink-0 w-8 h-8 rounded-md flex items-center justify-center mt-0.5",
+                statusConfig.bgClassName
               )}>
-                {searchQuery ? highlightMatch(getSessionTitle(item), searchQuery) : getSessionTitle(item)}
+                <StatusIcon className={cn(
+                  "w-4 h-4",
+                  statusConfig.className,
+                  statusConfig.animate && "animate-spin"
+                )} />
               </div>
-            </div>
-            {/* Subtitle - with optional flag at start, single line with truncation */}
-            <div className="flex items-center gap-1.5 text-xs text-foreground/70 w-full -mb-[2px] pr-6 min-w-0">
-              {item.isProcessing && (
-                <Spinner className="text-[8px] text-foreground shrink-0" />
-              )}
-              {/* When processing: show current step instead of badges */}
-              {item.isProcessing && item.currentStep && (
-                <span className="truncate text-foreground/60">
-                  {item.currentStep}
-                </span>
-              )}
-              {/* When not processing: show status badges */}
-              {!item.isProcessing && (
-                <>
-                  {hasUnreadMessages(item) && (
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
-                      New
-                    </span>
+
+              {/* Content column */}
+              <div className="flex flex-col gap-1 min-w-0 flex-1">
+                {/* Title row with status badge */}
+                <div className="flex items-center gap-2 w-full pr-8 min-w-0">
+                  <span className={cn(
+                    "font-medium truncate min-w-0 flex-1",
+                    item.isAsyncOperationOngoing && "animate-shimmer-text"
+                  )}>
+                    {searchQuery ? highlightMatch(getSessionTitle(item), searchQuery) : getSessionTitle(item)}
+                  </span>
+                </div>
+
+                {/* Metadata row - instance info */}
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground min-w-0">
+                  {/* Status label */}
+                  <span className={cn("font-medium", statusConfig.className)}>
+                    {statusConfig.label}
+                  </span>
+
+                  {/* Current step when processing */}
+                  {item.isProcessing && item.currentStep && (
+                    <>
+                      <span className="text-foreground/20">·</span>
+                      <span className="truncate text-foreground/50">
+                        {item.currentStep}
+                      </span>
+                    </>
                   )}
-                  {/* Status badges: Needs Input (plan waiting) or Complete (finished) */}
-                  {item.lastMessageRole === 'plan' ? (
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-warning/10 text-warning">
-                      Needs Input
-                    </span>
-                  ) : hasMessages(item) && (
-                    <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-foreground/5 text-foreground/40">
-                      Complete
-                    </span>
+
+                  {/* Scheduled time */}
+                  {item.scheduleConfig?.enabled && !item.isProcessing && (
+                    <>
+                      <span className="text-foreground/20">·</span>
+                      <span className="text-info/70">
+                        {item.scheduleConfig.time || 'Scheduled'}
+                      </span>
+                    </>
                   )}
-                </>
-              )}
-              {item.sharedUrl && (
-                <DropdownMenu modal={true}>
-                  <DropdownMenuTrigger asChild>
-                    <span
-                      className="shrink-0 px-1.5 py-0.5 h-[18px] text-[10px] font-medium rounded flex items-center bg-foreground/5 text-foreground/70 cursor-pointer hover:bg-foreground/10"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <CloudUpload className="h-[10px] w-[10px]" />
-                    </span>
-                  </DropdownMenuTrigger>
-                  <StyledDropdownMenuContent align="start">
-                    <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl(item.sharedUrl!)}>
-                      <Globe />
-                      Open in Browser
-                    </StyledDropdownMenuItem>
-                    <StyledDropdownMenuItem onClick={async () => {
-                      await navigator.clipboard.writeText(item.sharedUrl!)
-                      toast.success('Link copied to clipboard')
-                    }}>
-                      <Copy />
-                      Copy Link
-                    </StyledDropdownMenuItem>
-                    <StyledDropdownMenuItem onClick={async () => {
-                      const result = await window.electronAPI.sessionCommand(item.id, { type: 'updateShare' })
-                      if (result?.success) {
-                        toast.success('Share updated')
-                      } else {
-                        toast.error('Failed to update share', { description: result?.error })
-                      }
-                    }}>
-                      <RefreshCw />
-                      Update Share
-                    </StyledDropdownMenuItem>
-                    <StyledDropdownMenuSeparator />
-                    <StyledDropdownMenuItem onClick={async () => {
-                      const result = await window.electronAPI.sessionCommand(item.id, { type: 'revokeShare' })
-                      if (result?.success) {
-                        toast.success('Sharing stopped')
-                      } else {
-                        toast.error('Failed to stop sharing', { description: result?.error })
-                      }
-                    }} variant="destructive">
-                      <Link2Off />
-                      Stop Sharing
-                    </StyledDropdownMenuItem>
-                  </StyledDropdownMenuContent>
-                </DropdownMenu>
-              )}
-            </div>
-          </div>
-        </button>
-        {/* Timestamp - always visible, positioned under overflow menu */}
-        <div className="absolute right-3 bottom-3 z-10">
-          <span className="text-[10px] text-foreground/40">
-            {item.lastMessageAt && formatCompactTime(new Date(item.lastMessageAt))}
-          </span>
-        </div>
+
+                  {/* Unread badge */}
+                  {hasUnreadMessages(item) && !item.isProcessing && (
+                    <>
+                      <span className="text-foreground/20">·</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
+                        New
+                      </span>
+                    </>
+                  )}
+
+                  {/* Shared indicator */}
+                  {item.sharedUrl && (
+                    <DropdownMenu modal={true}>
+                      <DropdownMenuTrigger asChild>
+                        <span
+                          className="shrink-0 px-1.5 py-0.5 h-[18px] text-[10px] font-medium rounded flex items-center bg-foreground/5 text-foreground/70 cursor-pointer hover:bg-foreground/10"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <CloudUpload className="h-[10px] w-[10px]" />
+                        </span>
+                      </DropdownMenuTrigger>
+                      <StyledDropdownMenuContent align="start">
+                        <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl(item.sharedUrl!)}>
+                          <Globe />
+                          Open in Browser
+                        </StyledDropdownMenuItem>
+                        <StyledDropdownMenuItem onClick={async () => {
+                          await navigator.clipboard.writeText(item.sharedUrl!)
+                          toast.success('Link copied to clipboard')
+                        }}>
+                          <Copy />
+                          Copy Link
+                        </StyledDropdownMenuItem>
+                        <StyledDropdownMenuItem onClick={async () => {
+                          const result = await window.electronAPI.sessionCommand(item.id, { type: 'updateShare' })
+                          if (result?.success) {
+                            toast.success('Share updated')
+                          } else {
+                            toast.error('Failed to update share', { description: result?.error })
+                          }
+                        }}>
+                          <RefreshCw />
+                          Update Share
+                        </StyledDropdownMenuItem>
+                        <StyledDropdownMenuSeparator />
+                        <StyledDropdownMenuItem onClick={async () => {
+                          const result = await window.electronAPI.sessionCommand(item.id, { type: 'revokeShare' })
+                          if (result?.success) {
+                            toast.success('Sharing stopped')
+                          } else {
+                            toast.error('Failed to stop sharing', { description: result?.error })
+                          }
+                        }} variant="destructive">
+                          <Link2Off />
+                          Stop Sharing
+                        </StyledDropdownMenuItem>
+                      </StyledDropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+
+                  {/* Timestamp - pushed to end */}
+                  <span className="ml-auto text-foreground/30 tabular-nums">
+                    {item.lastMessageAt && formatCompactTime(new Date(item.lastMessageAt))}
+                  </span>
+                </div>
+              </div>
+            </button>
+          )
+        })()}
         {/* Action buttons - visible on hover or when menu is open */}
         <div
           className={cn(

@@ -1009,7 +1009,7 @@ export function ResponseCard({
           <div
             className={cn(
               "text-sm",
-              isPlan ? "pl-[22px] pr-[16px] py-3 overflow-y-auto" : "pl-[6px] pr-2"
+              isPlan ? "pl-[22px] pr-[16px] py-3 overflow-y-auto" : "pr-2"
             )}
             style={isPlan ? {
               maxHeight: MAX_HEIGHT,
@@ -1035,7 +1035,7 @@ export function ResponseCard({
             SIZE_CONFIG.fontSize,
             isPlan
               ? "pl-4 pr-2.5 py-2 border-t border-border/30 bg-muted/20"
-              : "pl-[6px] pr-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              : "pr-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
           )}>
             {/* Left side - Copy and View as Markdown */}
             <div className="flex items-center gap-3">
@@ -1113,7 +1113,7 @@ export function ResponseCard({
   return (
     <div className="relative group">
       {/* Content area - inline, uses displayedText (throttled) for performance */}
-      <div className="pl-[6px] pr-2 text-sm">
+      <div className="pr-2 text-sm">
         <Markdown
           mode="minimal"
           onUrlClick={onOpenUrl}
@@ -1124,7 +1124,7 @@ export function ResponseCard({
       </div>
 
       {/* Footer - inline subtle indicator */}
-      <div className={cn("pl-[6px] pr-2 py-1.5 flex items-center", SIZE_CONFIG.fontSize)}>
+      <div className={cn("pr-2 py-1.5 flex items-center", SIZE_CONFIG.fontSize)}>
         <div className="flex items-center gap-2 text-muted-foreground">
           <Spinner className={SIZE_CONFIG.spinnerSize} />
           <span>Streaming...</span>
@@ -1364,6 +1364,11 @@ export const TurnCard = React.memo(function TurnCard({
 
   return (
     <div className="space-y-1">
+      {/* Agent author label - Slack-style */}
+      <div className="flex items-center gap-2 pl-3">
+        <span className="text-[13px] font-semibold text-foreground">Agent</span>
+      </div>
+
       {/* Activity Section */}
       {hasActivities && (
         <div className="group select-none">
@@ -1523,7 +1528,7 @@ export const TurnCard = React.memo(function TurnCard({
 
       {/* Response Section - only shown when not buffering */}
       {response && !isBuffering && (
-        <div className={cn("select-text", hasActivities && "mt-2")}>
+        <div className={cn("select-text pl-3", hasActivities && "mt-2")}>
           <ResponseCard
             text={response.text}
             isStreaming={response.isStreaming}

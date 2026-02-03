@@ -42,8 +42,8 @@ export const CHAT_LAYOUT = {
   /** Vertical spacing between messages/turns */
   messageSpacing: 'space-y-2.5',
 
-  /** Extra padding for user messages (visual separation from AI responses) */
-  userMessagePadding: 'pt-4 pb-2',
+  /** Padding for user messages (Slack-style: space before user query) */
+  userMessagePadding: 'pt-6 pb-4',
 
   /** Bottom branding area padding */
   brandingPadding: 'pt-16 pb-24',

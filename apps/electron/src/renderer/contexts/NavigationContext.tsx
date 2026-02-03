@@ -60,6 +60,7 @@ import {
   isBoardNavigation,
   isIntegrationsNavigation,
   isFilesNavigation,
+  isPulseNavigation,
   DEFAULT_NAVIGATION_STATE,
 } from '../../shared/types'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
@@ -72,7 +73,7 @@ export type { Route }
 
 // Re-export navigation state types for consumers
 export type { NavigationState, ChatFilter }
-export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isCanvasNavigation, isBoardNavigation, isIntegrationsNavigation, isFilesNavigation }
+export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation, isCanvasNavigation, isBoardNavigation, isIntegrationsNavigation, isFilesNavigation, isPulseNavigation }
 
 interface NavigationContextValue {
   /** Navigate to a route */
@@ -393,6 +394,13 @@ export function NavigationProvider({
 
       // Files: no auto-selection needed
       if (isFilesNavigation(newState)) {
+        setSession({ selected: null })
+        setNavigationState(newState)
+        return newState
+      }
+
+      // Pulse: no auto-selection needed
+      if (isPulseNavigation(newState)) {
         setSession({ selected: null })
         setNavigationState(newState)
         return newState

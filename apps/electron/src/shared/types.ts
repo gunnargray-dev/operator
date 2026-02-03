@@ -328,6 +328,8 @@ export interface Session {
     /** Model's context window size in tokens (from SDK modelUsage) */
     contextWindow?: number
   }
+  // Number of completed tool use steps in this session
+  stepCount?: number
 }
 
 /**
@@ -968,6 +970,7 @@ export interface DeepLinkNavigation {
  */
 export type RightSidebarPanel =
   | { type: 'sessionMetadata' }
+  | { type: 'taskDetail' }
   | { type: 'files'; path?: string }
   | { type: 'history' }
   | { type: 'artifacts' }
@@ -1076,6 +1079,14 @@ export interface FilesNavigationState {
   rightSidebar?: RightSidebarPanel
 }
 
+/**
+ * Pulse navigation state - focused feed of task outputs
+ */
+export interface PulseNavigationState {
+  navigator: 'pulse'
+  rightSidebar?: RightSidebarPanel
+}
+
 export type NavigationState =
   | ChatsNavigationState
   | SourcesNavigationState
@@ -1085,6 +1096,7 @@ export type NavigationState =
   | BoardNavigationState
   | IntegrationsNavigationState
   | FilesNavigationState
+  | PulseNavigationState
 
 /**
  * Type guard to check if state is chats navigation
@@ -1143,6 +1155,13 @@ export const isFilesNavigation = (
 ): state is FilesNavigationState => state.navigator === 'files'
 
 /**
+ * Type guard to check if state is pulse navigation
+ */
+export const isPulseNavigation = (
+  state: NavigationState
+): state is PulseNavigationState => state.navigator === 'pulse'
+
+/**
  * Default navigation state - allChats with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
@@ -1181,6 +1200,9 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   }
   if (state.navigator === 'files') {
     return 'files'
+  }
+  if (state.navigator === 'pulse') {
+    return 'pulse'
   }
   // Chats
   const f = state.filter

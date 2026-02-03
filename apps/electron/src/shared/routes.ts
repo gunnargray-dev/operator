@@ -130,6 +130,9 @@ export const routes = {
     /** Files view - workspace file browser */
     files: () => 'files' as const,
 
+    /** Pulse view - focused feed of task outputs */
+    pulse: () => 'pulse' as const,
+
     /** Project folder view - sessions in a project */
     project: (projectId: string, sessionId?: string) =>
       sessionId

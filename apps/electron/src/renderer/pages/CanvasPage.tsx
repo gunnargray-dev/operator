@@ -23,6 +23,16 @@ import {
   Sparkles,
   Clock,
   LayoutGrid,
+  Send,
+  Loader2,
+  X,
+  Square,
+  ExternalLink,
+  Play,
+  ChevronRight,
+  Zap,
+  CheckCircle2,
+  Footprints,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
@@ -44,10 +54,413 @@ import {
 import { sourcesAtom } from '@/atoms/sources'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { navigate, routes } from '@/lib/navigate'
+import { ProcessMonitor } from '@/components/app-shell/ProcessMonitor'
 import type { SessionMeta } from '@/atoms/sessions'
 import type { LoadedSource } from '../../shared/types'
+import { groupMessagesByTurn, type AssistantTurn, type ActivityItem } from '@craft-agent/ui/chat/turn-utils'
 
-type ViewMode = 'canvas' | 'board'
+type ViewMode = 'canvas' | 'board' | 'processes'
+
+// =============================================================================
+// TaskInput — Minimal floating input for quick task creation
+// =============================================================================
+
+function TaskInput({
+  onCreateTask,
+}: {
+  onCreateTask: (message: string) => Promise<void>
+}) {
+  const [value, setValue] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!value.trim() || isSubmitting) return
+
+    setIsSubmitting(true)
+    try {
+      await onCreateTask(value.trim())
+      setValue('')
+      inputRef.current?.blur()
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10">
+      <motion.form
+        onSubmit={handleSubmit}
+        initial={false}
+        animate={{
+          width: isFocused || value ? 480 : 320,
+        }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        className={cn(
+          'flex items-center gap-2 px-4 py-3',
+          'bg-background/95 backdrop-blur-sm',
+          'border rounded-xl shadow-lg',
+          'transition-colors',
+          isFocused
+            ? 'border-accent/40 shadow-accent/5'
+            : 'border-foreground/15 hover:border-foreground/25'
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder="Start a new task..."
+          disabled={isSubmitting}
+          className={cn(
+            'flex-1 bg-transparent text-sm text-foreground',
+            'placeholder:text-foreground/40',
+            'focus:outline-none',
+            'disabled:opacity-50'
+          )}
+        />
+        <motion.button
+          type="submit"
+          disabled={!value.trim() || isSubmitting}
+          initial={false}
+          animate={{
+            opacity: value.trim() ? 1 : 0,
+            scale: value.trim() ? 1 : 0.8,
+          }}
+          className={cn(
+            'shrink-0 p-1.5 rounded-lg',
+            'text-foreground/50 hover:text-accent hover:bg-accent/10',
+            'disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-foreground/50',
+            'transition-colors'
+          )}
+        >
+          {isSubmitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="h-4 w-4" />
+          )}
+        </motion.button>
+      </motion.form>
+    </div>
+  )
+}
+
+// =============================================================================
+// TaskDetailPanel — Slide-over panel showing task details with chain of thought
+// =============================================================================
+
+/** Get display name for a tool (strip MCP prefixes) */
+function getToolDisplayName(name: string): string {
+  return name.replace(/^mcp__[^_]+__/, '')
+}
+
+/** Activity status icon */
+function ActivityStatusIcon({ status }: { status: string }) {
+  switch (status) {
+    case 'running':
+      return <Loader2 className="h-3 w-3 animate-spin text-foreground/50" />
+    case 'completed':
+      return <CheckCircle2 className="h-3 w-3 text-success" />
+    case 'error':
+      return <AlertCircle className="h-3 w-3 text-destructive" />
+    default:
+      return <ChevronRight className="h-3 w-3 text-foreground/30" />
+  }
+}
+
+/** Single activity row in the chain of thought */
+function ChainOfThoughtRow({ activity }: { activity: ActivityItem }) {
+  // Intermediate messages (LLM commentary/thinking)
+  if (activity.type === 'intermediate') {
+    const isThinking = activity.status === 'running'
+    const displayContent = isThinking ? 'Thinking...' : (activity.content || '').slice(0, 100)
+    return (
+      <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-foreground/[0.02] border border-foreground/5">
+        <div className="shrink-0 mt-0.5">
+          {isThinking ? (
+            <Loader2 className="h-3 w-3 animate-spin text-foreground/40" />
+          ) : (
+            <Bot className="h-3 w-3 text-foreground/40" />
+          )}
+        </div>
+        <span className="text-[11px] text-foreground/50 italic line-clamp-2">
+          {displayContent}
+        </span>
+      </div>
+    )
+  }
+
+  // Status activities (e.g., compacting)
+  if (activity.type === 'status') {
+    return (
+      <div className="flex items-center gap-2 py-1.5 px-2 rounded bg-foreground/[0.02] border border-foreground/5">
+        <ActivityStatusIcon status={activity.status} />
+        <span className="text-[11px] text-foreground/50 truncate">
+          {activity.content}
+        </span>
+      </div>
+    )
+  }
+
+  // Tool activities
+  const toolName = activity.displayName || (activity.toolName ? getToolDisplayName(activity.toolName) : 'Tool')
+  const intent = activity.intent || (activity.toolInput?.description as string | undefined)
+
+  return (
+    <div className="flex items-start gap-2 py-1.5 px-2 rounded bg-foreground/[0.02] border border-foreground/5">
+      <div className="shrink-0 mt-0.5">
+        <ActivityStatusIcon status={activity.status} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <span className="text-[11px] text-foreground/70 font-medium">{toolName}</span>
+        {intent && (
+          <p className="text-[10px] text-foreground/40 truncate mt-0.5">{intent}</p>
+        )}
+        {activity.status === 'error' && activity.error && (
+          <p className="text-[10px] text-destructive truncate mt-0.5">{activity.error}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TaskDetailPanel({
+  sessionId,
+  sessionMeta,
+  onClose,
+  onStop,
+  onViewFull,
+}: {
+  sessionId: string
+  sessionMeta: SessionMeta
+  onClose: () => void
+  onStop?: () => void
+  onViewFull?: () => void
+}) {
+  const title = sessionMeta.name || sessionMeta.preview || 'Untitled'
+  const isRunning = sessionMeta.isProcessing
+  const isWaiting = sessionMeta.lastMessageRole === 'plan'
+  const isScheduled = sessionMeta.scheduleConfig?.enabled && !isRunning
+  const isCompleted = !isRunning && !isWaiting && !isScheduled
+
+  const tokens = sessionMeta.tokenUsage?.totalTokens
+  const cost = sessionMeta.tokenUsage?.costUsd
+
+  // Load full session messages
+  const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
+  const fullSession = useAtomValue(sessionAtomFamily(sessionId))
+
+  // Load messages when session is selected
+  useEffect(() => {
+    ensureMessagesLoaded(sessionId)
+  }, [sessionId, ensureMessagesLoaded])
+
+  // Group messages into turns and extract activities
+  const { activities, lastResponse } = useMemo(() => {
+    if (!fullSession?.messages?.length) {
+      return { activities: [], lastResponse: undefined }
+    }
+
+    const turns = groupMessagesByTurn(fullSession.messages)
+
+    // Collect all activities from assistant turns (most recent first)
+    const allActivities: ActivityItem[] = []
+    let lastResp: string | undefined
+
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const turn = turns[i]
+      if (turn?.type === 'assistant') {
+        const assistantTurn = turn as AssistantTurn
+        // Add activities in reverse order (newest first)
+        allActivities.push(...assistantTurn.activities)
+        // Get the latest response
+        if (!lastResp && assistantTurn.response?.text) {
+          lastResp = assistantTurn.response.text
+        }
+      }
+    }
+
+    return {
+      activities: allActivities.slice(0, 20), // Limit to 20 most recent
+      lastResponse: lastResp,
+    }
+  }, [fullSession?.messages])
+
+  // Format duration
+  const formatDuration = (ms: number) => {
+    const seconds = Math.floor(ms / 1000)
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    if (hours > 0) return `${hours}h ${minutes % 60}m`
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+    return `${seconds}s`
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="px-3 py-2.5 border-b border-foreground/8">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            {isRunning && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                RUNNING
+              </span>
+            )}
+            {isWaiting && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-warning bg-warning/10 rounded px-1.5 py-0.5">
+                <AlertCircle className="h-3 w-3" />
+                NEEDS INPUT
+              </span>
+            )}
+            {isScheduled && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-info bg-info/10 rounded px-1.5 py-0.5">
+                <Clock className="h-3 w-3" />
+                SCHEDULED
+              </span>
+            )}
+            {isCompleted && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-foreground/50 bg-foreground/5 rounded px-1.5 py-0.5">
+                <CheckCircle2 className="h-3 w-3" />
+                COMPLETED
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-foreground/10 text-foreground/40 hover:text-foreground transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <h3 className="text-[14px] font-semibold text-foreground leading-snug line-clamp-2">
+          {title}
+        </h3>
+      </div>
+
+      {/* Content */}
+      <ScrollArea className="flex-1">
+        <div className="p-3 space-y-4">
+          {/* Current Step (for running tasks) */}
+          {isRunning && sessionMeta.currentStep && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Zap className="h-3.5 w-3.5 text-success" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Current Step
+                </span>
+              </div>
+              <div className="bg-success/5 border border-success/20 rounded-lg p-3">
+                <p className="text-[12px] text-foreground/70">
+                  {sessionMeta.currentStep}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Chain of Thought - Real activities from messages */}
+          {activities.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Wrench className="h-3.5 w-3.5 text-foreground/50" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Chain of Thought
+                </span>
+                <span className="text-[10px] text-foreground/30">
+                  {activities.length}
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {activities.map((activity) => (
+                  <ChainOfThoughtRow key={activity.id} activity={activity} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Response Preview - from real messages or fallback to meta */}
+          {(lastResponse || sessionMeta.lastAssistantPreview) && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <FileText className="h-3.5 w-3.5 text-foreground/50" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Response
+                </span>
+              </div>
+              <div className="bg-foreground/[0.02] border border-foreground/8 rounded-lg p-3">
+                <p className="text-[12px] text-foreground/60 leading-relaxed line-clamp-6">
+                  {lastResponse || sessionMeta.lastAssistantPreview}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Stats */}
+          {(tokens || cost) && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="h-3.5 w-3.5 text-foreground/50" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Usage
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {tokens && (
+                  <div className="bg-foreground/[0.02] border border-foreground/8 rounded-lg p-2.5">
+                    <p className="text-[10px] text-foreground/40 mb-0.5">Tokens</p>
+                    <p className="text-[14px] font-mono font-medium text-foreground/70">
+                      {tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}K` : tokens}
+                    </p>
+                  </div>
+                )}
+                {cost !== undefined && (
+                  <div className="bg-foreground/[0.02] border border-foreground/8 rounded-lg p-2.5">
+                    <p className="text-[10px] text-foreground/40 mb-0.5">Cost</p>
+                    <p className="text-[14px] font-mono font-medium text-foreground/70">
+                      ${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+
+      {/* Footer Actions */}
+      <div className="px-3 py-2.5 border-t border-foreground/8 flex items-center gap-2">
+        {isRunning && onStop && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onStop}
+            className="flex-1 h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/10"
+          >
+            <Square className="h-3.5 w-3.5 mr-1.5" />
+            Stop
+          </Button>
+        )}
+        {onViewFull && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onViewFull}
+            className="flex-1 h-8 text-xs"
+          >
+            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+            View Full
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // =============================================================================
 // Graph Types & Constants
@@ -1104,6 +1517,7 @@ function SessionCard({
     (e) => e.type === 'error' || e.type === 'typed_error',
   ).length
   const lastEvent = recentEvents[0]
+  const tokens = meta.tokenUsage?.totalTokens
 
   return (
     <button
@@ -1115,57 +1529,42 @@ function SessionCard({
           : 'border-foreground/8 bg-foreground/[0.02] hover:border-foreground/15 hover:bg-foreground/[0.04]',
       )}
     >
-      {/* Status + source badges */}
-      <div className="flex items-center gap-1.5 mb-2">
-        {meta.isProcessing ? (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-            ACTIVE
-          </span>
-        ) : (
-          <span className="text-[10px] font-medium text-foreground/40 bg-foreground/5 rounded px-1.5 py-0.5">
-            COMPLETED
-          </span>
+      {/* Task name */}
+      <div className="mb-2">
+        <p className="text-[13px] font-medium text-foreground leading-snug line-clamp-2">
+          {title}
+        </p>
+        {/* Last activity line */}
+        {lastEvent && (
+          <p className="text-[11px] text-foreground/40 truncate mt-0.5">
+            {lastEvent.summary}
+          </p>
         )}
       </div>
 
-      {/* Session name */}
-      <p className="text-[13px] font-medium text-foreground leading-snug line-clamp-2 mb-2">
-        {title}
-      </p>
-
-      {/* Last activity line */}
-      {lastEvent && (
-        <p className="text-[11px] text-foreground/40 truncate mb-2">
-          {lastEvent.summary}
-          {lastEvent.toolDetail && (
-            <span className="text-foreground/30 italic">
-              {' — '}
-              {lastEvent.toolDetail}
-            </span>
-          )}
-        </p>
-      )}
-
-      {/* Footer: time + tokens + errors */}
-      <div className="flex items-center gap-3 pt-1.5 border-t border-foreground/5">
+      {/* Footer: time + steps + tokens + errors */}
+      <div className="flex items-center gap-3 pt-2 border-t border-foreground/5">
         {timeAgo && (
           <span className="inline-flex items-center gap-1 text-[10px] text-foreground/35">
             <Clock className="h-3 w-3" />
             {timeAgo}
           </span>
         )}
-        {meta.tokenUsage && meta.tokenUsage.totalTokens > 0 && (
+        {(meta.stepCount ?? 0) > 0 && (
+          <span className="inline-flex items-center gap-1 text-[10px] text-foreground/35">
+            <Footprints className="h-3 w-3" />
+            {meta.stepCount}
+          </span>
+        )}
+        {tokens && tokens > 0 && (
           <span className="text-[10px] text-foreground/35 font-mono">
-            {meta.tokenUsage.totalTokens >= 1000
-              ? `${(meta.tokenUsage.totalTokens / 1000).toFixed(1)}K`
-              : meta.tokenUsage.totalTokens}
+            {tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}K` : tokens}
           </span>
         )}
         {errorCount > 0 && (
-          <span className="inline-flex items-center gap-1 text-[10px] text-destructive">
+          <span className="inline-flex items-center gap-1 text-[10px] text-destructive ml-auto">
             <AlertCircle className="h-3 w-3" />
-            {errorCount} error{errorCount !== 1 ? 's' : ''}
+            {errorCount}
           </span>
         )}
       </div>
@@ -1596,8 +1995,19 @@ export default function CanvasPage() {
   const activityFeed = useAtomValue(activityFeedAtom)
   const allSources = useAtomValue(sourcesAtom)
   const [selectedSessionId, setSelectedSessionId] = useAtom(selectedCanvasSessionIdAtom)
+  const { activeWorkspaceId, onCreateSession, onSendMessage, openRightSidebar } = useAppShellContext()
 
-  const [viewMode, setViewMode] = useState<ViewMode>('canvas')
+  const [viewMode, setViewMode] = useState<ViewMode>('processes')
+
+  // Create a new task (session + message) - stays on Activity page
+  const handleCreateTask = useCallback(async (message: string) => {
+    if (!activeWorkspaceId) return
+    const session = await onCreateSession(activeWorkspaceId)
+    onSendMessage(session.id, message)
+    // Select the new session in canvas view to show it's running
+    setSelectedSessionId(session.id)
+    // Stay on Activity page - task will appear in the feed/processes
+  }, [activeWorkspaceId, onCreateSession, onSendMessage, setSelectedSessionId])
 
   const activeSessions = useMemo(
     () => Array.from(sessionMetaMap.values()).filter((s) => s.isProcessing),
@@ -1675,14 +2085,28 @@ export default function CanvasPage() {
               <LayoutGrid className="h-3.5 w-3.5" />
               Board
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode('processes')}
+              className={cn(
+                'h-7 px-2.5 text-xs gap-1.5',
+                viewMode === 'processes'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-foreground/50 hover:text-foreground hover:bg-transparent'
+              )}
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              Processes
+            </Button>
           </div>
         }
       />
 
       <div className="flex-1 flex min-h-0">
-        {/* Left: Canvas or Board */}
-        <div className="flex-1 min-w-0">
-          {viewMode === 'canvas' ? (
+        {/* Main content: Canvas, Board, or Processes */}
+        <div className="flex-1 min-w-0 relative">
+          {viewMode === 'canvas' && (
             <CanvasView
               selectedSessionId={selectedSessionId}
               setSelectedSessionId={setSelectedSessionId}
@@ -1690,99 +2114,32 @@ export default function CanvasPage() {
               activityFeed={activityFeed}
               allSources={allSources}
             />
-          ) : (
+          )}
+          {viewMode === 'board' && (
             <BoardView
               sessionMetaMap={sessionMetaMap}
               allSources={allSources}
             />
           )}
-        </div>
+          {viewMode === 'processes' && (
+            <ProcessMonitor
+              sessions={Array.from(sessionMetaMap.values())}
+              onViewSession={(sessionId) => {
+                setSelectedSessionId(sessionId)
+                // Open the right sidebar to show session details
+                openRightSidebar?.(sessionId)
+              }}
+              onStopSession={async (sessionId) => {
+                await window.electronAPI.cancelProcessing(sessionId, false)
+              }}
+              onRunNow={async (sessionId) => {
+                await window.electronAPI.sessionCommand(sessionId, { type: 'runScheduledNow' })
+              }}
+            />
+          )}
 
-        {/* Right: Activity Feed (persistent) */}
-        <div className="w-80 border-l border-foreground/8 flex flex-col">
-          <div className="px-3 py-2.5 border-b border-foreground/8">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-foreground/50 font-medium uppercase tracking-wider">
-                Activity Feed
-              </span>
-            </div>
-            {totalTokenUsage.totalTokens > 0 && (
-              <div className="flex items-center justify-between text-foreground/60">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium font-mono">
-                    {formatTokenCount(totalTokenUsage.totalTokens)}
-                  </span>
-                  <span className="text-xs text-foreground/40">tokens</span>
-                </div>
-                <span className="text-sm font-medium font-mono text-foreground/50">
-                  {formatCost(totalTokenUsage.costUsd)}
-                </span>
-              </div>
-            )}
-          </div>
-          <ScrollArea className="flex-1">
-            <div className="p-3 flex flex-col gap-2">
-              {sessionIds.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-foreground/30 gap-2">
-                  <Clock className="h-5 w-5" />
-                  <span className="text-xs">No activity yet</span>
-                </div>
-              ) : (
-                <>
-                  {/* Active Sessions */}
-                  {activeSessions.length > 0 && (
-                    <div className="mb-2">
-                      <span className="text-[10px] text-foreground/40 uppercase tracking-wider font-medium px-1">
-                        Active
-                      </span>
-                      <div className="flex flex-col gap-1.5 mt-1.5">
-                        {activeSessions.map((meta) => (
-                          <SessionCard
-                            key={meta.id}
-                            meta={meta}
-                            isSelected={meta.id === selectedSessionId}
-                            recentEvents={activityFeed
-                              .filter((e) => e.sessionId === meta.id)
-                              .slice(0, 3)}
-                            onClick={() => handleActivityCardClick(meta.id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Recent Sessions */}
-                  {(() => {
-                    const recentSessions = sessionIds
-                      .map((id) => sessionMetaMap.get(id))
-                      .filter((m): m is SessionMeta => !!m && !m.isProcessing)
-                      .slice(0, 20)
-                    if (recentSessions.length === 0) return null
-                    return (
-                      <div>
-                        <span className="text-[10px] text-foreground/40 uppercase tracking-wider font-medium px-1">
-                          Recent
-                        </span>
-                        <div className="flex flex-col gap-1.5 mt-1.5">
-                          {recentSessions.map((meta) => (
-                            <SessionCard
-                              key={meta.id}
-                              meta={meta}
-                              isSelected={meta.id === selectedSessionId}
-                              recentEvents={activityFeed
-                                .filter((e) => e.sessionId === meta.id)
-                                .slice(0, 3)}
-                              onClick={() => handleActivityCardClick(meta.id)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </>
-              )}
-            </div>
-          </ScrollArea>
+          {/* Floating task input */}
+          <TaskInput onCreateTask={handleCreateTask} />
         </div>
       </div>
     </div>

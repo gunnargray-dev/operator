@@ -1,10 +1,9 @@
 /**
  * UserMessageBubble - Shared user message component
  *
- * Displays user messages with right-aligned styling:
- * - Subtle background (5% foreground)
- * - Pill-shaped corners
- * - Max width 80%
+ * Displays user messages with Slack-style left-aligned layout:
+ * - Author label ("You") at top
+ * - Full width, subtle background
  * - Markdown rendering for links and code
  * - Optional file attachments with thumbnails
  * - Content badges for @mentions (sources, skills)
@@ -292,10 +291,33 @@ export function UserMessageBubble({
   }
 
   return (
-    <div className={cn("flex flex-col items-end gap-3 w-full", className)}>
+    <div className={cn("flex flex-col items-start gap-1 w-full", className)}>
+      {/* Author header - Slack-style */}
+      <div className="flex items-center gap-2 pl-3">
+        <span className="text-[13px] font-semibold text-foreground">You</span>
+        {isQueued && (
+          <span className="text-[10px] text-muted-foreground/70 bg-foreground/5 px-1.5 py-0.5 rounded">
+            queued
+          </span>
+        )}
+        {isPending && (
+          <span className="text-[10px] text-muted-foreground/70">sending...</span>
+        )}
+      </div>
+
+      {/* Badges row - ultrathink and edit request badges */}
+      {(ultrathink || hasEditRequestBadges) && (
+        <div className="flex gap-2 pl-3 flex-wrap">
+          {ultrathink && <UltrathinkBadge />}
+          {editRequestBadges.map((badge, i) => (
+            <EditRequestBadge key={`edit-badge-${i}`} badge={badge} />
+          ))}
+        </div>
+      )}
+
       {/* Attachment preview row - stored attachments with thumbnails */}
       {hasAttachments && (
-        <div className="flex gap-2 justify-end max-w-[80%] flex-wrap">
+        <div className="flex gap-2 pl-3 flex-wrap">
           {attachments!.map((att, i) => {
             const isImage = att.type === 'image'
             const hasThumbnail = !!att.thumbnailBase64
@@ -352,21 +374,11 @@ export function UserMessageBubble({
         </div>
       )}
 
-      {/* Badges row - ultrathink and edit request badges above text bubble */}
-      {(ultrathink || hasEditRequestBadges) && (
-        <div className="flex gap-2 justify-end max-w-[80%] flex-wrap">
-          {ultrathink && <UltrathinkBadge />}
-          {editRequestBadges.map((badge, i) => (
-            <EditRequestBadge key={`edit-badge-${i}`} badge={badge} />
-          ))}
-        </div>
-      )}
-
-      {/* Text content bubble */}
+      {/* Text content - Slack-style (no bubble, just left-aligned text) */}
       <div
         className={cn(
-          "max-w-[80%] bg-foreground/5 rounded-[16px] px-5 py-3.5 break-words min-w-0 select-text [&_p]:m-0",
-          isPending && "animate-shimmer"
+          "pl-3 pr-4 break-words min-w-0 select-text [&_p]:m-0",
+          isPending && "opacity-60"
         )}
       >
         {hasInlineBadges
@@ -383,13 +395,6 @@ export function UserMessageBubble({
           )
         }
       </div>
-
-      {/* Queued badge */}
-      {isQueued && (
-        <span className="text-[10px] text-muted-foreground bg-foreground/5 px-2 py-0.5 rounded-full">
-          queued
-        </span>
-      )}
     </div>
   )
 }

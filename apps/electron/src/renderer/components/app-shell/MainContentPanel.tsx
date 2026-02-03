@@ -27,8 +27,9 @@ import {
   isBoardNavigation,
   isIntegrationsNavigation,
   isFilesNavigation,
+  isPulseNavigation,
 } from '@/contexts/NavigationContext'
-import { AppSettingsPage, WorkspaceSettingsPage, PermissionsSettingsPage, PreferencesPage, ShortcutsPage, SourceInfoPage, ChatPage, CanvasPage, BoardPage, IntegrationsPage, FilesPage } from '@/pages'
+import { AppSettingsPage, WorkspaceSettingsPage, PermissionsSettingsPage, PreferencesPage, ShortcutsPage, SourceInfoPage, ChatPage, CanvasPage, BoardPage, IntegrationsPage, FilesPage, PulsePage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 
 export interface MainContentPanelProps {
@@ -165,6 +166,15 @@ export function MainContentPanel({
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <CanvasPage />
+      </Panel>
+    )
+  }
+
+  // Pulse navigator - focused feed of task outputs
+  if (isPulseNavigation(navState)) {
+    return wrapWithStoplight(
+      <Panel variant="grow" className={className}>
+        <PulsePage />
       </Panel>
     )
   }

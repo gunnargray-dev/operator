@@ -948,6 +948,22 @@ html.dark[data-scenic] .fullscreen-overlay-background {
   50% { opacity: 0.5; }
 }
 
+/* Card shimmer - glowing border effect for running/processing cards */
+@keyframes card-shimmer {
+  0%, 100% {
+    border-color: oklch(from var(--success) l c h / 0.15);
+    box-shadow: 0 0 0 0 oklch(from var(--success) l c h / 0);
+  }
+  50% {
+    border-color: oklch(from var(--success) l c h / 0.35);
+    box-shadow: 0 0 12px -2px oklch(from var(--success) l c h / 0.2);
+  }
+}
+
+.animate-card-shimmer {
+  animation: card-shimmer 2s ease-in-out infinite;
+}
+
 /* =============================================================================
    SHAKE ANIMATION
 

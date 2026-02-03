@@ -18,6 +18,9 @@ import {
   LayoutGrid,
   FolderKanban,
   FolderOpen,
+  ListTodo,
+  Files,
+  Radio,
 } from "lucide-react"
 import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -86,6 +89,7 @@ import {
   isBoardNavigation,
   isIntegrationsNavigation,
   isFilesNavigation,
+  isPulseNavigation,
   type NavigationState,
   type ChatFilter,
 } from "@/contexts/NavigationContext"
@@ -199,6 +203,8 @@ function AppShellContent({
     return storage.get(storage.KEYS.rightSidebarWidth, 300)
   })
   const [skipRightSidebarAnimation, setSkipRightSidebarAnimation] = React.useState(false)
+  // Session ID for right sidebar when not in chat view (e.g., canvas/activity view)
+  const [rightSidebarSessionId, setRightSidebarSessionId] = React.useState<string | null>(null)
 
   // Window width tracking for responsive behavior
   const [windowWidth, setWindowWidth] = React.useState(window.innerWidth)
@@ -253,14 +259,24 @@ function AppShellContent({
     setSearchQuery('')
   }, [navFilterKey])
 
-  // Auto-hide right sidebar when navigating away from chat sessions
+  // Auto-hide right sidebar when navigating away from views that support it
   React.useEffect(() => {
-    // Hide sidebar if not in chat view or no session selected
-    if (!isChatsNavigation(navState) || !navState.details) {
+    // Hide sidebar if not in chat view (with session) or canvas view (with rightSidebarSessionId)
+    const isInChatWithSession = isChatsNavigation(navState) && navState.details
+    const isInCanvasWithSession = isCanvasNavigation(navState) && rightSidebarSessionId
+
+    if (!isInChatWithSession && !isInCanvasWithSession) {
       setSkipRightSidebarAnimation(true)
       setIsRightSidebarVisible(false)
       // Reset skip flag after state update
       setTimeout(() => setSkipRightSidebarAnimation(false), 0)
+    }
+  }, [navState, rightSidebarSessionId])
+
+  // Clear right sidebar session when leaving canvas view
+  React.useEffect(() => {
+    if (!isCanvasNavigation(navState)) {
+      setRightSidebarSessionId(null)
     }
   }, [navState])
 
@@ -324,7 +340,7 @@ function AppShellContent({
   const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
 
   // Enabled permission modes for Shift+Tab cycling (min 2 modes)
-  const [enabledModes, setEnabledModes] = React.useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
+  const [enabledModes, setEnabledModes] = React.useState<PermissionMode[]>(['ask', 'allow-all'])
 
   // Load workspace settings (for localMcpEnabled and cyclablePermissionModes) on workspace change
   React.useEffect(() => {
@@ -712,12 +728,26 @@ function AppShellContent({
     return (
       <HeaderIconButton
         icon={<PanelLeftRounded className="h-5 w-6" />}
-        onClick={() => setIsRightSidebarVisible(false)}
+        onClick={() => {
+          setIsRightSidebarVisible(false)
+          setRightSidebarSessionId(null)
+        }}
         tooltip="Close sidebar"
         className="text-foreground"
       />
     )
   }, [isFocusedMode, isRightSidebarVisible])
+
+  // Callbacks for opening/closing right sidebar from other views (e.g., canvas)
+  const openRightSidebar = React.useCallback((sessionId: string) => {
+    setRightSidebarSessionId(sessionId)
+    setIsRightSidebarVisible(true)
+  }, [])
+
+  const closeRightSidebar = React.useCallback(() => {
+    setIsRightSidebarVisible(false)
+    setRightSidebarSessionId(null)
+  }, [])
 
   // Extend context value with local overrides (textareaRef, wrapped onDeleteSession, sources, skills, enabledModes, rightSidebarOpenButton, todoStates)
   const appShellContextValue = React.useMemo<AppShellContextType>(() => ({
@@ -733,7 +763,12 @@ function AppShellContent({
     onCreateProject: handleCreateProject,
     onSessionSourcesChange: handleSessionSourcesChange,
     rightSidebarButton: rightSidebarOpenButton,
-  }), [contextValue, handleDeleteSession, sources, skills, enabledModes, todoStates, projectFolders, handleMoveToProject, handleCreateProject, handleSessionSourcesChange, rightSidebarOpenButton])
+    // Right sidebar control for canvas/activity view
+    openRightSidebar,
+    closeRightSidebar,
+    isRightSidebarVisible,
+    rightSidebarSessionId,
+  }), [contextValue, handleDeleteSession, sources, skills, enabledModes, todoStates, projectFolders, handleMoveToProject, handleCreateProject, handleSessionSourcesChange, rightSidebarOpenButton, openRightSidebar, closeRightSidebar, isRightSidebarVisible, rightSidebarSessionId])
 
   // Persist expanded folders to localStorage
   React.useEffect(() => {
@@ -869,10 +904,7 @@ function AppShellContent({
     // 4. Integrations
     result.push({ id: 'nav:integrations', type: 'nav', action: () => navigate(routes.view.integrations()) })
 
-    // 5. Files
-    result.push({ id: 'nav:files', type: 'nav', action: () => navigate(routes.view.files()) })
-
-    // 6. Settings
+    // 5. Settings
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
 
     return result
@@ -1084,6 +1116,13 @@ function AppShellContent({
                     })),
                     { id: "separator:projects-nav", type: "separator" },
                     {
+                      id: "nav:pulse",
+                      title: "Pulse",
+                      icon: Radio,
+                      variant: isPulseNavigation(navState) ? "default" : "ghost",
+                      onClick: () => navigate(routes.view.pulse()),
+                    },
+                    {
                       id: "nav:canvas",
                       title: "Activity",
                       icon: LayoutGrid,
@@ -1098,13 +1137,6 @@ function AppShellContent({
                       variant: isIntegrationsNavigation(navState) ? "default" : "ghost",
                       onClick: () => navigate(routes.view.integrations()),
                       dataTutorial: "integrations-nav",
-                    },
-                    {
-                      id: "nav:files",
-                      title: "Files",
-                      icon: FolderOpen,
-                      variant: isFilesNavigation(navState) ? "default" : "ghost",
-                      onClick: () => navigate(routes.view.files()),
                     },
                     { id: "separator:canvas-settings", type: "separator" },
                     {
@@ -1167,64 +1199,78 @@ function AppShellContent({
           className="flex-1 overflow-hidden min-w-0 flex h-full"
           style={{ padding: PANEL_WINDOW_EDGE_SPACING, gap: PANEL_PANEL_SPACING / 2 }}
         >
-          {/* === SESSION LIST PANEL === (hidden in focused mode, canvas/board/integrations mode, or when sidebar collapsed) */}
-          {!isFocusedMode && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isFilesNavigation(navState) && isSidebarVisible && (
+          {/* === SESSION LIST PANEL === (hidden in focused mode, canvas/board/integrations/pulse mode, or when sidebar collapsed) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isPulseNavigation(navState) && isSidebarVisible && (
           <div
             className="h-full flex flex-col min-w-0 bg-background shrink-0 shadow-middle overflow-hidden rounded-l-[14px] rounded-r-[10px]"
             style={{ width: sessionListWidth }}
           >
-            <PanelHeader
-              title={isSidebarVisible ? listTitle : undefined}
-              compensateForStoplight={!isSidebarVisible}
-              actions={
-                <>
-                  {/* More menu with Search (only for chats mode) */}
-                  {isChatsNavigation(navState) && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <HeaderIconButton icon={<MoreHorizontal className="h-4 w-4" />} />
-                      </DropdownMenuTrigger>
-                      <StyledDropdownMenuContent align="end" light>
-                        <StyledDropdownMenuItem
-                          onClick={() => {
-                            setSearchActive(true)
-                          }}
-                        >
-                          <Search className="h-3.5 w-3.5" />
-                          <span className="flex-1">Search</span>
-                        </StyledDropdownMenuItem>
-                      </StyledDropdownMenuContent>
-                    </DropdownMenu>
+            {/* Tab Navigation for Tasks/Files */}
+            {(isChatsNavigation(navState) || isFilesNavigation(navState)) && (
+              <div className="flex items-center gap-1 px-3 pt-3 pb-2">
+                <button
+                  onClick={() => navigate(routes.view.allChats())}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors",
+                    isChatsNavigation(navState)
+                      ? "bg-foreground/[0.08] text-foreground"
+                      : "text-foreground/50 hover:text-foreground/70 hover:bg-foreground/[0.04]"
                   )}
-                  {/* Add Source button (only for sources mode) */}
-                  {isSourcesNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip="Add Source"
-                          data-tutorial="add-source-button"
-                        />
-                      }
-                      {...getEditConfig('add-source', activeWorkspace.rootPath)}
-                    />
+                >
+                  <ListTodo className="h-3.5 w-3.5" />
+                  Tasks
+                </button>
+                <button
+                  onClick={() => navigate(routes.view.files())}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors",
+                    isFilesNavigation(navState)
+                      ? "bg-foreground/[0.08] text-foreground"
+                      : "text-foreground/50 hover:text-foreground/70 hover:bg-foreground/[0.04]"
                   )}
-                  {/* Add Skill button (only for skills mode) */}
-                  {isSkillsNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip="Add Skill"
-                          data-tutorial="add-skill-button"
-                        />
-                      }
-                      {...getEditConfig('add-skill', activeWorkspace.rootPath)}
-                    />
-                  )}
-                </>
-              }
-            />
+                >
+                  <Files className="h-3.5 w-3.5" />
+                  Files
+                </button>
+              </div>
+            )}
+            {/* Panel header for non-chat/files navigators */}
+            {!isChatsNavigation(navState) && !isFilesNavigation(navState) && (
+              <PanelHeader
+                title={isSidebarVisible ? listTitle : undefined}
+                compensateForStoplight={!isSidebarVisible}
+                actions={
+                  <>
+                    {/* Add Source button (only for sources mode) */}
+                    {isSourcesNavigation(navState) && activeWorkspace && (
+                      <EditPopover
+                        trigger={
+                          <HeaderIconButton
+                            icon={<Plus className="h-4 w-4" />}
+                            tooltip="Add Source"
+                            data-tutorial="add-source-button"
+                          />
+                        }
+                        {...getEditConfig('add-source', activeWorkspace.rootPath)}
+                      />
+                    )}
+                    {/* Add Skill button (only for skills mode) */}
+                    {isSkillsNavigation(navState) && activeWorkspace && (
+                      <EditPopover
+                        trigger={
+                          <HeaderIconButton
+                            icon={<Plus className="h-4 w-4" />}
+                            tooltip="Add Skill"
+                            data-tutorial="add-skill-button"
+                          />
+                        }
+                        {...getEditConfig('add-skill', activeWorkspace.rootPath)}
+                      />
+                    )}
+                  </>
+                }
+              />
+            )}
             {/* Content: SessionList, SourcesListPanel, or SettingsNavigator based on navigation state */}
             {isSourcesNavigation(navState) && (
               /* Sources List */
@@ -1302,11 +1348,19 @@ function AppShellContent({
                 />
               </>
             )}
+            {isFilesNavigation(navState) && (
+              /* Files List - Placeholder, content shows in main panel */
+              <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground px-4">
+                <Files className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm font-medium text-center">Files</p>
+                <p className="text-xs opacity-60 mt-1 text-center">View workspace files in the main panel</p>
+              </div>
+            )}
           </div>
           )}
 
-          {/* Session List Resize Handle (hidden in focused mode, canvas/board/integrations mode, or sidebar collapsed) */}
-          {!isFocusedMode && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isFilesNavigation(navState) && isSidebarVisible && (
+          {/* Session List Resize Handle (hidden in focused mode, canvas/board/integrations/pulse mode, or sidebar collapsed) */}
+          {!isFocusedMode && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isPulseNavigation(navState) && isSidebarVisible && (
           <div
             ref={sessionListHandleRef}
             onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
@@ -1337,97 +1391,125 @@ function AppShellContent({
             <MainContentPanel isFocusedMode={isFocusedMode} />
           </div>
 
-          {/* Right Sidebar - Inline Mode (≥ 920px) - hidden in canvas/board mode */}
-          {!isFocusedMode && !shouldUseOverlay && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isFilesNavigation(navState) && (
-            <>
-              {/* Resize Handle */}
-              {isRightSidebarVisible && (
-                <div
-                  ref={rightSidebarHandleRef}
-                  onMouseDown={(e) => { e.preventDefault(); setIsResizing('right-sidebar') }}
-                  onMouseMove={(e) => {
-                    if (rightSidebarHandleRef.current) {
-                      const rect = rightSidebarHandleRef.current.getBoundingClientRect()
-                      setRightSidebarHandleY(e.clientY - rect.top)
-                    }
-                  }}
-                  onMouseLeave={() => { if (isResizing !== 'right-sidebar') setRightSidebarHandleY(null) }}
-                  className="relative w-0 h-full cursor-col-resize flex justify-center shrink-0"
-                >
-                  {/* Touch area */}
-                  <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
-                    <div
-                      className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
-                      style={getResizeGradientStyle(rightSidebarHandleY)}
-                    />
-                  </div>
-                </div>
-              )}
+          {/* Right Sidebar - Determine which session to show */}
+          {(() => {
+            // Session ID: from chat view or from canvas/activity view
+            const sidebarSessionId = isChatsNavigation(navState) && navState.details
+              ? navState.details.sessionId
+              : rightSidebarSessionId || undefined
 
-              {/* Inline Sidebar */}
-              <motion.div
-                initial={false}
-                animate={{
-                  width: isRightSidebarVisible ? rightSidebarWidth : 0,
-                  marginLeft: isRightSidebarVisible ? 0 : -PANEL_PANEL_SPACING / 2,
-                }}
-                transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
-                className="h-full shrink-0 overflow-visible"
-              >
-                <motion.div
-                  initial={false}
-                  animate={{
-                    x: isRightSidebarVisible ? 0 : rightSidebarWidth + PANEL_PANEL_SPACING / 2,
-                    opacity: isRightSidebarVisible ? 1 : 0,
-                  }}
-                  transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
-                  className="h-full bg-foreground-2 shadow-middle rounded-l-[10px] rounded-r-[14px]"
-                  style={{ width: rightSidebarWidth }}
-                >
-                  <RightSidebar
-                    panel={{ type: 'sessionMetadata' }}
-                    sessionId={isChatsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
-                    closeButton={rightSidebarCloseButton}
-                  />
-                </motion.div>
-              </motion.div>
-            </>
-          )}
+            // Panel type: taskDetail for canvas view (shows full chat), sessionMetadata for chat view
+            const sidebarPanelType = isCanvasNavigation(navState) && rightSidebarSessionId
+              ? 'taskDetail' as const
+              : 'sessionMetadata' as const
 
-          {/* Right Sidebar - Overlay Mode (< 920px) - hidden in canvas/board mode */}
-          {!isFocusedMode && shouldUseOverlay && !isCanvasNavigation(navState) && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isFilesNavigation(navState) && (
-            <AnimatePresence>
-              {isRightSidebarVisible && (
-                <>
-                  {/* Backdrop */}
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={skipRightSidebarAnimation ? { duration: 0 } : { duration: 0.2 }}
-                    className="fixed inset-0 bg-black/25 z-overlay"
-                    onClick={() => setIsRightSidebarVisible(false)}
-                  />
-                  {/* Drawer panel */}
-                  <motion.div
-                    initial={{ x: 316 }}
-                    animate={{ x: 0 }}
-                    exit={{ x: 316 }}
-                    transition={skipRightSidebarAnimation ? { duration: 0 } : springTransition}
-                    className="fixed inset-y-0 right-0 w-[316px] h-screen z-overlay p-1.5"
-                  >
-                    <div className="h-full bg-foreground-2 overflow-hidden shadow-strong rounded-[12px]">
-                      <RightSidebar
-                        panel={{ type: 'sessionMetadata' }}
-                        sessionId={isChatsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}
-                        closeButton={rightSidebarCloseButton}
-                      />
-                    </div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
-          )}
+            // Show sidebar for: chat view (with session) OR canvas view (with selected session)
+            const canShowSidebar = !isFocusedMode && !isBoardNavigation(navState) && !isIntegrationsNavigation(navState) && !isFilesNavigation(navState) && !isPulseNavigation(navState) && (
+              (isChatsNavigation(navState) && navState.details) ||
+              (isCanvasNavigation(navState) && rightSidebarSessionId)
+            )
+
+            if (!canShowSidebar) return null
+
+            return (
+              <>
+                {/* Right Sidebar - Inline Mode (≥ threshold) */}
+                {!shouldUseOverlay && (
+                  <>
+                    {/* Resize Handle */}
+                    {isRightSidebarVisible && (
+                      <div
+                        ref={rightSidebarHandleRef}
+                        onMouseDown={(e) => { e.preventDefault(); setIsResizing('right-sidebar') }}
+                        onMouseMove={(e) => {
+                          if (rightSidebarHandleRef.current) {
+                            const rect = rightSidebarHandleRef.current.getBoundingClientRect()
+                            setRightSidebarHandleY(e.clientY - rect.top)
+                          }
+                        }}
+                        onMouseLeave={() => { if (isResizing !== 'right-sidebar') setRightSidebarHandleY(null) }}
+                        className="relative w-0 h-full cursor-col-resize flex justify-center shrink-0"
+                      >
+                        {/* Touch area */}
+                        <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
+                          <div
+                            className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
+                            style={getResizeGradientStyle(rightSidebarHandleY)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Inline Sidebar */}
+                    <motion.div
+                      initial={false}
+                      animate={{
+                        width: isRightSidebarVisible ? rightSidebarWidth : 0,
+                        marginLeft: isRightSidebarVisible ? 0 : -PANEL_PANEL_SPACING / 2,
+                      }}
+                      transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                      className="h-full shrink-0 overflow-visible"
+                    >
+                      <motion.div
+                        initial={false}
+                        animate={{
+                          x: isRightSidebarVisible ? 0 : rightSidebarWidth + PANEL_PANEL_SPACING / 2,
+                          opacity: isRightSidebarVisible ? 1 : 0,
+                        }}
+                        transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                        className="h-full bg-foreground-2 shadow-middle rounded-l-[10px] rounded-r-[14px]"
+                        style={{ width: rightSidebarWidth }}
+                      >
+                        <RightSidebar
+                          panel={{ type: sidebarPanelType }}
+                          sessionId={sidebarSessionId}
+                          closeButton={rightSidebarCloseButton}
+                        />
+                      </motion.div>
+                    </motion.div>
+                  </>
+                )}
+
+                {/* Right Sidebar - Overlay Mode (< threshold) */}
+                {shouldUseOverlay && (
+                  <AnimatePresence>
+                    {isRightSidebarVisible && (
+                      <>
+                        {/* Backdrop */}
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={skipRightSidebarAnimation ? { duration: 0 } : { duration: 0.2 }}
+                          className="fixed inset-0 bg-black/25 z-overlay"
+                          onClick={() => {
+                            setIsRightSidebarVisible(false)
+                            setRightSidebarSessionId(null)
+                          }}
+                        />
+                        {/* Drawer panel */}
+                        <motion.div
+                          initial={{ x: 316 }}
+                          animate={{ x: 0 }}
+                          exit={{ x: 316 }}
+                          transition={skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                          className="fixed inset-y-0 right-0 w-[316px] h-screen z-overlay p-1.5"
+                        >
+                          <div className="h-full bg-foreground-2 overflow-hidden shadow-strong rounded-[12px]">
+                            <RightSidebar
+                              panel={{ type: sidebarPanelType }}
+                              sessionId={sidebarSessionId}
+                              closeButton={rightSidebarCloseButton}
+                            />
+                          </div>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
 
