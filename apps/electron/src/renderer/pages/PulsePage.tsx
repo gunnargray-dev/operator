@@ -1,14 +1,13 @@
 /**
  * PulsePage - Focused feed of task outputs (Linear-style)
  *
- * Clean inline feed showing task responses and files generated.
- * No cards - just content with date dividers.
+ * Clean centered feed showing task summaries, artifacts, and scheduled task status.
  */
 
 import * as React from 'react'
 import { useMemo, useEffect, useCallback } from 'react'
 import { useAtomValue } from 'jotai'
-import { formatDistanceToNow, isToday, isYesterday, isThisWeek, format } from 'date-fns'
+import { formatDistanceToNow, isToday, isYesterday, isThisWeek, format, formatDistance } from 'date-fns'
 import {
   CheckCircle2,
   Clock,
@@ -18,13 +17,24 @@ import {
   MoreHorizontal,
   MessageSquare,
   Activity,
+  FileText,
+  Globe,
+  Table2,
+  GitBranch,
+  ExternalLink,
+  Radio,
+  Timer,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { sessionMetaMapAtom, type SessionMeta } from '@/atoms/sessions'
+import { sessionArtifactsAtomFamily, setActiveArtifactAtom } from '@/atoms/artifacts'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { navigate, routes } from '@/lib/navigate'
 import * as storage from '@/lib/local-storage'
+import type { AnyArtifact, ArtifactType } from '../../shared/artifact-types'
+import { useSetAtom } from 'jotai'
+import { atom } from 'jotai'
 
 // =============================================================================
 // Types
@@ -36,10 +46,12 @@ interface PulseItem {
   title: string
   response: string
   timestamp: number
-  status: 'completed' | 'running' | 'waiting'
+  status: 'completed' | 'running' | 'waiting' | 'scheduled'
   isNew: boolean
   filesChanged?: number
   meta: SessionMeta
+  artifacts: AnyArtifact[]
+  scheduledNextRun?: number
 }
 
 type DateGroup = 'new' | 'today' | 'yesterday' | 'thisWeek' | 'older'
@@ -69,14 +81,31 @@ function getDateGroupLabel(group: DateGroup): string {
   }
 }
 
+function getArtifactIcon(type: ArtifactType) {
+  switch (type) {
+    case 'html':
+      return <Globe className="h-4 w-4" />
+    case 'document':
+      return <FileText className="h-4 w-4" />
+    case 'spreadsheet':
+      return <Table2 className="h-4 w-4" />
+    case 'code':
+      return <FileCode className="h-4 w-4" />
+    case 'diagram':
+      return <GitBranch className="h-4 w-4" />
+    default:
+      return <FileText className="h-4 w-4" />
+  }
+}
+
 // =============================================================================
 // StatusBadge - Inline status indicator
 // =============================================================================
 
-function StatusBadge({ status }: { status: PulseItem['status'] }) {
+function StatusBadge({ status, nextRun }: { status: PulseItem['status']; nextRun?: number }) {
   if (status === 'completed') {
     return (
-      <span className="inline-flex items-center gap-1 text-[12px] text-success">
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-success font-medium">
         <CheckCircle2 className="h-3.5 w-3.5" />
         <span>Completed</span>
       </span>
@@ -84,7 +113,7 @@ function StatusBadge({ status }: { status: PulseItem['status'] }) {
   }
   if (status === 'running') {
     return (
-      <span className="inline-flex items-center gap-1 text-[12px] text-info">
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-info font-medium">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         <span>Running</span>
       </span>
@@ -92,13 +121,61 @@ function StatusBadge({ status }: { status: PulseItem['status'] }) {
   }
   if (status === 'waiting') {
     return (
-      <span className="inline-flex items-center gap-1 text-[12px] text-warning">
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-warning font-medium">
         <AlertCircle className="h-3.5 w-3.5" />
         <span>Needs input</span>
       </span>
     )
   }
+  if (status === 'scheduled') {
+    const nextRunText = nextRun
+      ? `Next run in ${formatDistance(nextRun, Date.now())}`
+      : 'Monitoring'
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground/50 font-medium">
+        <Timer className="h-3.5 w-3.5" />
+        <span>{nextRunText}</span>
+      </span>
+    )
+  }
   return null
+}
+
+// =============================================================================
+// ArtifactCard - Clickable artifact preview
+// =============================================================================
+
+function ArtifactCard({
+  artifact,
+  onClick,
+}: {
+  artifact: AnyArtifact
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      className="group flex items-start gap-3 p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02] hover:bg-foreground/[0.04] hover:border-foreground/15 transition-colors text-left w-full"
+    >
+      <div className="shrink-0 w-8 h-8 rounded-md bg-accent/10 flex items-center justify-center text-accent">
+        {getArtifactIcon(artifact.type)}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-medium text-accent/70 uppercase tracking-wider">
+            {artifact.type}
+          </span>
+        </div>
+        <p className="text-[13px] font-medium text-foreground truncate mt-0.5">
+          {artifact.title}
+        </p>
+      </div>
+      <ExternalLink className="h-3.5 w-3.5 text-foreground/30 group-hover:text-foreground/50 transition-colors shrink-0 mt-1" />
+    </button>
+  )
 }
 
 // =============================================================================
@@ -108,29 +185,31 @@ function StatusBadge({ status }: { status: PulseItem['status'] }) {
 function PulseEntry({
   item,
   onClick,
+  onArtifactClick,
 }: {
   item: PulseItem
   onClick: () => void
+  onArtifactClick: (artifact: AnyArtifact) => void
 }) {
   const timeAgo = formatDistanceToNow(new Date(item.timestamp), { addSuffix: true })
 
   return (
     <article
       className={cn(
-        "group py-6 cursor-pointer transition-colors",
-        "hover:bg-foreground/[0.02]",
+        "group py-5 cursor-pointer transition-colors border-b border-foreground/[0.06]",
+        "hover:bg-foreground/[0.015]",
         item.isNew && "relative"
       )}
       onClick={onClick}
     >
       {/* New indicator dot */}
       {item.isNew && (
-        <div className="absolute left-0 top-8 w-2 h-2 rounded-full bg-accent" />
+        <div className="absolute left-0 top-7 w-1.5 h-1.5 rounded-full bg-accent" />
       )}
 
-      <div className={cn("px-6", item.isNew && "pl-8")}>
+      <div className={cn("px-0", item.isNew && "pl-4")}>
         {/* Header: Title + More button */}
-        <div className="flex items-start justify-between gap-4 mb-2">
+        <div className="flex items-start justify-between gap-4 mb-1.5">
           <h3 className="text-[15px] font-semibold text-foreground leading-snug">
             {item.title}
           </h3>
@@ -139,46 +218,45 @@ function PulseEntry({
               e.stopPropagation()
               // TODO: Add dropdown menu
             }}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-foreground/10 transition-opacity"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-foreground/10 transition-opacity shrink-0"
           >
-            <MoreHorizontal className="h-4 w-4 text-foreground/50" />
+            <MoreHorizontal className="h-4 w-4 text-foreground/40" />
           </button>
         </div>
 
         {/* Metadata row: Status + Time */}
-        <div className="flex items-center gap-3 mb-4">
-          <StatusBadge status={item.status} />
-          <span className="text-[12px] text-foreground/40">{timeAgo}</span>
+        <div className="flex items-center gap-3 mb-3">
+          <StatusBadge status={item.status} nextRun={item.scheduledNextRun} />
+          <span className="text-[11px] text-foreground/35">{timeAgo}</span>
         </div>
 
-        {/* Response content */}
-        {item.response && (
-          <div className="text-[14px] text-foreground/80 leading-relaxed whitespace-pre-wrap">
+        {/* Artifacts */}
+        {item.artifacts.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {item.artifacts.map(artifact => (
+              <ArtifactCard
+                key={artifact.id}
+                artifact={artifact}
+                onClick={() => onArtifactClick(artifact)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Response content - truncated summary */}
+        {item.response && item.artifacts.length === 0 && (
+          <div className="text-[13px] text-foreground/60 leading-relaxed line-clamp-4">
             {item.response}
           </div>
         )}
 
         {/* Files changed indicator */}
         {item.filesChanged && item.filesChanged > 0 && (
-          <div className="mt-4 flex items-center gap-2 text-[12px] text-foreground/50">
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-foreground/40">
             <FileCode className="h-3.5 w-3.5" />
             <span>{item.filesChanged} file{item.filesChanged !== 1 ? 's' : ''} changed</span>
           </div>
         )}
-
-        {/* Action buttons */}
-        <div className="mt-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onClick()
-            }}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-foreground/60 hover:text-foreground hover:bg-foreground/5 transition-colors"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            View
-          </button>
-        </div>
       </div>
     </article>
   )
@@ -193,11 +271,11 @@ function DateDivider({ group }: { group: DateGroup }) {
   const isNewDivider = group === 'new'
 
   return (
-    <div className="flex items-center gap-4 px-6 py-3">
+    <div className="flex items-center gap-4 py-4">
       <span
         className={cn(
-          "text-[12px] font-medium",
-          isNewDivider ? "text-accent" : "text-foreground/40"
+          "text-[11px] font-medium uppercase tracking-wider",
+          isNewDivider ? "text-accent" : "text-foreground/30"
         )}
       >
         {label}
@@ -206,8 +284,8 @@ function DateDivider({ group }: { group: DateGroup }) {
         className={cn(
           "flex-1 h-px",
           isNewDivider
-            ? "bg-gradient-to-r from-accent/40 to-transparent"
-            : "bg-gradient-to-r from-foreground/10 to-transparent"
+            ? "bg-gradient-to-r from-accent/30 to-transparent"
+            : "bg-gradient-to-r from-foreground/8 to-transparent"
         )}
       />
     </div>
@@ -221,6 +299,7 @@ function DateDivider({ group }: { group: DateGroup }) {
 export default function PulsePage() {
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const { activeWorkspaceId } = useAppShellContext()
+  const setActiveArtifact = useSetAtom(setActiveArtifactAtom)
 
   // Track last viewed timestamp
   const lastViewedAt = useMemo(() => {
@@ -232,6 +311,13 @@ export default function PulsePage() {
     storage.set(storage.KEYS.lastPulseViewedAt, Date.now())
   }, [])
 
+  // Get all session IDs for artifact lookup
+  const sessionIds = useMemo(() => {
+    return Array.from(sessionMetaMap.values())
+      .filter(meta => meta.workspaceId === activeWorkspaceId)
+      .map(meta => meta.id)
+  }, [sessionMetaMap, activeWorkspaceId])
+
   // Build pulse items from sessions
   const pulseItems = useMemo((): PulseItem[] => {
     const items: PulseItem[] = []
@@ -241,10 +327,25 @@ export default function PulsePage() {
       if (!meta.lastMessageAt) continue
 
       let status: PulseItem['status'] = 'completed'
+      let scheduledNextRun: number | undefined
+
       if (meta.isProcessing) {
         status = 'running'
       } else if (meta.lastMessageRole === 'plan') {
         status = 'waiting'
+      } else if (meta.isScheduled || meta.scheduledAt) {
+        status = 'scheduled'
+        // Calculate next run time (mock for now - could be from meta.nextScheduledRun)
+        if (meta.scheduledAt) {
+          // If there's a scheduled time in the future, use it
+          const now = Date.now()
+          if (meta.scheduledAt > now) {
+            scheduledNextRun = meta.scheduledAt
+          } else {
+            // Otherwise estimate next run (e.g., 2 hours from last run)
+            scheduledNextRun = meta.lastMessageAt + (2 * 60 * 60 * 1000)
+          }
+        }
       }
 
       // Get the response preview
@@ -260,6 +361,8 @@ export default function PulsePage() {
         isNew: meta.lastMessageAt > lastViewedAt,
         filesChanged: meta.filesChanged,
         meta,
+        artifacts: [], // Will be populated by component
+        scheduledNextRun,
       })
     }
 
@@ -291,62 +394,105 @@ export default function PulsePage() {
     navigate(routes.view.allChats(sessionId))
   }, [])
 
+  // Handle artifact click
+  const handleArtifactClick = useCallback((sessionId: string, artifact: AnyArtifact) => {
+    setActiveArtifact(sessionId, artifact.id)
+    navigate(routes.view.allChats(sessionId))
+  }, [setActiveArtifact])
+
   // Count of new items
   const newCount = groupedItems.get('new')?.length || 0
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="shrink-0 px-6 pt-[52px] pb-4 border-b border-foreground/5">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[18px] font-semibold text-foreground">Pulse</h1>
-          {newCount > 0 && (
-            <span className="text-[12px] font-medium text-accent bg-accent/10 rounded-full px-2 py-0.5">
-              {newCount} new
-            </span>
-          )}
+      {/* Header - centered with max width */}
+      <div className="shrink-0 pt-[52px] pb-6 border-b border-foreground/[0.06]">
+        <div className="max-w-[680px] mx-auto px-6">
+          <div className="flex items-center gap-3">
+            <h1 className="text-[22px] font-semibold text-foreground">Pulse</h1>
+            {newCount > 0 && (
+              <span className="text-[11px] font-medium text-accent bg-accent/10 rounded-full px-2.5 py-1">
+                {newCount} new
+              </span>
+            )}
+          </div>
+          <p className="text-[13px] text-foreground/40 mt-1">
+            Recent task activity and outputs
+          </p>
         </div>
-        <p className="text-[13px] text-foreground/50 mt-1">
-          Recent task activity and responses
-        </p>
       </div>
 
-      {/* Feed */}
+      {/* Feed - centered with max width */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <ScrollArea className="h-full">
-          {pulseItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-foreground/40">
-              <Activity className="w-10 h-10 mb-3 opacity-30" />
-              <p className="text-[14px] font-medium">No activity yet</p>
-              <p className="text-[13px] opacity-60 mt-1">
-                Complete tasks to see them here
-              </p>
-            </div>
-          ) : (
-            <div className="pb-8">
-              {(['new', 'today', 'yesterday', 'thisWeek', 'older'] as DateGroup[]).map(group => {
-                const items = groupedItems.get(group) || []
-                if (items.length === 0) return null
+          <div className="max-w-[680px] mx-auto px-6">
+            {pulseItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-24 text-foreground/40">
+                <Activity className="w-12 h-12 mb-4 opacity-20" />
+                <p className="text-[15px] font-medium">No activity yet</p>
+                <p className="text-[13px] opacity-50 mt-1">
+                  Complete tasks to see them here
+                </p>
+              </div>
+            ) : (
+              <div className="pb-12">
+                {(['new', 'today', 'yesterday', 'thisWeek', 'older'] as DateGroup[]).map(group => {
+                  const items = groupedItems.get(group) || []
+                  if (items.length === 0) return null
 
-                return (
-                  <React.Fragment key={group}>
-                    <DateDivider group={group} />
-                    <div className="divide-y divide-foreground/5">
-                      {items.map(item => (
-                        <PulseEntry
-                          key={item.id}
-                          item={item}
-                          onClick={() => handleEntryClick(item.sessionId)}
-                        />
-                      ))}
-                    </div>
-                  </React.Fragment>
-                )
-              })}
-            </div>
-          )}
+                  return (
+                    <React.Fragment key={group}>
+                      <DateDivider group={group} />
+                      <div>
+                        {items.map(item => (
+                          <PulseEntryWithArtifacts
+                            key={item.id}
+                            item={item}
+                            onClick={() => handleEntryClick(item.sessionId)}
+                            onArtifactClick={(artifact) => handleArtifactClick(item.sessionId, artifact)}
+                          />
+                        ))}
+                      </div>
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </ScrollArea>
       </div>
     </div>
+  )
+}
+
+// =============================================================================
+// PulseEntryWithArtifacts - Wrapper to load artifacts for each entry
+// =============================================================================
+
+function PulseEntryWithArtifacts({
+  item,
+  onClick,
+  onArtifactClick,
+}: {
+  item: PulseItem
+  onClick: () => void
+  onArtifactClick: (artifact: AnyArtifact) => void
+}) {
+  // Get artifacts for this session
+  const artifactsAtom = sessionArtifactsAtomFamily(item.sessionId)
+  const artifacts = useAtomValue(artifactsAtom)
+
+  // Merge artifacts into item
+  const itemWithArtifacts = useMemo(() => ({
+    ...item,
+    artifacts,
+  }), [item, artifacts])
+
+  return (
+    <PulseEntry
+      item={itemWithArtifacts}
+      onClick={onClick}
+      onArtifactClick={onArtifactClick}
+    />
   )
 }

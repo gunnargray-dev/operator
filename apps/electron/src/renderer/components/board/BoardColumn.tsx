@@ -24,7 +24,7 @@ export function BoardColumn({ state, sessions, allSources, onCardClick }: BoardC
     <div
       ref={setNodeRef}
       className={cn(
-        'flex flex-col w-[280px] min-w-[280px] rounded-[10px] border transition-colors',
+        'flex flex-col min-w-0 rounded-[10px] border transition-colors',
         isOver
           ? 'border-accent/30 bg-accent/[0.03]'
           : 'border-foreground/8 bg-foreground/[0.02]',

@@ -1110,6 +1110,7 @@ export class SessionManager {
         sharedId: m.sharedId,
         lastMessageRole: m.lastMessageRole,
         stepCount: m.stepCount,
+        tokenUsage: m.tokenUsage,
       }))
       .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
   }

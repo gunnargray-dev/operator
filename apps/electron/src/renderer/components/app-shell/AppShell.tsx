@@ -14,10 +14,7 @@ import {
   DatabaseZap,
   Zap,
   Puzzle,
-  Inbox,
   LayoutGrid,
-  FolderKanban,
-  FolderOpen,
   ListTodo,
   Files,
   Radio,
@@ -26,6 +23,7 @@ import { PanelRightRounded } from "../icons/PanelRightRounded"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
+import pplxIcon from "@/assets/pplx-icon.png"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
@@ -103,6 +101,7 @@ import { RightSidebar } from "./RightSidebar"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { CommandPalette } from "@/components/CommandPalette"
+import { TaskInputOverlay } from "@/components/TaskInputOverlay"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component
@@ -651,6 +650,14 @@ function AppShellContent({
     damping: 49,
   }
 
+  // Smoother transition for right sidebar (slide panel)
+  const sidebarSlideTransition = {
+    type: "spring" as const,
+    stiffness: 220,
+    damping: 28,
+    mass: 0.9,
+  }
+
   // Use session metadata from Jotai atom (lightweight, no messages)
   // This prevents closures from retaining full message arrays
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
@@ -790,10 +797,6 @@ function AppShellContent({
     storage.set(storage.KEYS.collapsedSidebarItems, [...collapsedItems])
   }, [collapsedItems])
 
-  const handleAllChatsClick = useCallback(() => {
-    navigate(routes.view.allChats())
-  }, [])
-
   // Handler for sources view
   const handleSourcesClick = useCallback(() => {
     navigate(routes.view.sources())
@@ -817,6 +820,8 @@ function AppShellContent({
   // their request in the popover UI before opening a new chat window.
   const [editPopoverOpen, setEditPopoverOpen] = useState<'statuses' | 'add-source' | 'add-skill' | null>(null)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [taskInputOpen, setTaskInputOpen] = useState(false)
+  const [taskInputSubmitting, setTaskInputSubmitting] = useState(false)
 
   // Handler for "Configure Statuses" context menu action
   // Opens the EditPopover for status configuration
@@ -838,14 +843,32 @@ function AppShellContent({
     setTimeout(() => setEditPopoverOpen('add-skill'), 50)
   }, [])
 
-  // Create a new chat and select it
-  const handleNewChat = useCallback(async (_useCurrentAgent: boolean = true) => {
+  // Open the task input overlay
+  const handleNewChat = useCallback((_useCurrentAgent: boolean = true) => {
+    if (!activeWorkspace) return
+    setTaskInputOpen(true)
+  }, [activeWorkspace])
+
+  // Submit task from input overlay - creates session, sends message, navigates to pulse
+  const handleTaskSubmit = useCallback(async (prompt: string) => {
     if (!activeWorkspace) return
 
-    const newSession = await onCreateSession(activeWorkspace.id)
-    // Navigate to the new session via central routing
-    navigate(routes.view.allChats(newSession.id))
-  }, [activeWorkspace, onCreateSession])
+    setTaskInputSubmitting(true)
+    try {
+      // Create the session
+      const newSession = await onCreateSession(activeWorkspace.id)
+
+      // Send the message to start the task
+      await onSendMessage(newSession.id, prompt, [])
+
+      // Navigate to pulse view to see the task running
+      navigate(routes.view.pulse())
+    } catch (error) {
+      console.error('[AppShell] Failed to create task:', error)
+    } finally {
+      setTaskInputSubmitting(false)
+    }
+  }, [activeWorkspace, onCreateSession, onSendMessage])
 
   // Delete Source - simplified since agents system is removed
   const handleDeleteSource = useCallback(async (sourceSlug: string) => {
@@ -890,25 +913,20 @@ function AppShellContent({
   const unifiedSidebarItems = React.useMemo((): SidebarItem[] => {
     const result: SidebarItem[] = []
 
-    // 1. All Tasks
-    result.push({ id: 'nav:allChats', type: 'nav', action: handleAllChatsClick })
+    // 1. Pulse
+    result.push({ id: 'nav:pulse', type: 'nav', action: () => navigate(routes.view.pulse()) })
 
-    // 2. Project folders
-    for (const folder of projectFolders) {
-      result.push({ id: `nav:project:${folder.id}`, type: 'nav', action: () => navigate(routes.view.project(folder.id)) })
-    }
-
-    // 3. Activity (Canvas)
+    // 2. Activity (Canvas)
     result.push({ id: 'nav:canvas', type: 'nav', action: () => navigate(routes.view.canvas()) })
 
-    // 4. Integrations
+    // 3. Integrations
     result.push({ id: 'nav:integrations', type: 'nav', action: () => navigate(routes.view.integrations()) })
 
-    // 5. Settings
+    // 4. Settings
     result.push({ id: 'nav:settings', type: 'nav', action: () => handleSettingsClick('app') })
 
     return result
-  }, [handleAllChatsClick, navigate, handleSettingsClick, projectFolders])
+  }, [navigate, handleSettingsClick])
 
   // Toggle folder expanded state
   const handleToggleFolder = React.useCallback((path: string) => {
@@ -1070,8 +1088,13 @@ function AppShellContent({
             <div className="flex h-full flex-col pt-[50px] select-none">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
+                {/* App Branding */}
+                <div className="px-2 pt-1 pb-3 flex items-center gap-2.5">
+                  <img src={pplxIcon} alt="Perplexity" className="w-7 h-7 rounded-lg shrink-0" />
+                  <span className="text-[15px] font-medium text-foreground">Perplexity</span>
+                </div>
                 {/* New Chat Button - with context menu for "Open in New Window" */}
-                <div className="px-2 pt-1 pb-2">
+                <div className="px-2 pt-0 pb-2">
                   <ContextMenu modal={true}>
                     <ContextMenuTrigger asChild>
                       <Button
@@ -1097,24 +1120,6 @@ function AppShellContent({
                   getItemProps={getSidebarItemProps}
                   focusedItemId={focusedSidebarItemId}
                   links={[
-                    {
-                      id: "nav:allChats",
-                      title: "All Tasks",
-                      label: String(workspaceSessionMetas.length),
-                      icon: Inbox,
-                      variant: chatFilter?.kind === 'allChats' ? "default" : "ghost",
-                      onClick: handleAllChatsClick,
-                    },
-                    // Project folders
-                    ...projectFolders.map(folder => ({
-                      id: `nav:project:${folder.id}`,
-                      title: folder.name,
-                      label: String(workspaceSessionMetas.filter(s => s.projectId === folder.id).length),
-                      icon: FolderKanban,
-                      variant: (chatFilter?.kind === 'project' && chatFilter.projectId === folder.id ? "default" : "ghost") as "default" | "ghost",
-                      onClick: () => navigate(routes.view.project(folder.id)),
-                    })),
-                    { id: "separator:projects-nav", type: "separator" },
                     {
                       id: "nav:pulse",
                       title: "Pulse",
@@ -1447,7 +1452,7 @@ function AppShellContent({
                         width: isRightSidebarVisible ? rightSidebarWidth : 0,
                         marginLeft: isRightSidebarVisible ? 0 : -PANEL_PANEL_SPACING / 2,
                       }}
-                      transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                      transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : sidebarSlideTransition}
                       className="h-full shrink-0 overflow-visible"
                     >
                       <motion.div
@@ -1456,7 +1461,7 @@ function AppShellContent({
                           x: isRightSidebarVisible ? 0 : rightSidebarWidth + PANEL_PANEL_SPACING / 2,
                           opacity: isRightSidebarVisible ? 1 : 0,
                         }}
-                        transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                        transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : sidebarSlideTransition}
                         className="h-full bg-foreground-2 shadow-middle rounded-l-[10px] rounded-r-[14px]"
                         style={{ width: rightSidebarWidth }}
                       >
@@ -1492,7 +1497,7 @@ function AppShellContent({
                           initial={{ x: 316 }}
                           animate={{ x: 0 }}
                           exit={{ x: 316 }}
-                          transition={skipRightSidebarAnimation ? { duration: 0 } : springTransition}
+                          transition={skipRightSidebarAnimation ? { duration: 0 } : sidebarSlideTransition}
                           className="fixed inset-y-0 right-0 w-[316px] h-screen z-overlay p-1.5"
                         >
                           <div className="h-full bg-foreground-2 overflow-hidden shadow-strong rounded-[12px]">
@@ -1582,7 +1587,8 @@ function AppShellContent({
         onOpenChange={setCommandPaletteOpen}
         sessions={sessionMetaMap}
         onCreateSession={async () => {
-          await handleNewChat(true)
+          setCommandPaletteOpen(false)
+          setTaskInputOpen(true)
         }}
         onSelectSession={(sessionId) => {
           navigate(routes.view.allChats(sessionId))
@@ -1590,6 +1596,14 @@ function AppShellContent({
         onNavigate={(route) => {
           navigate(route)
         }}
+      />
+
+      {/* Task Input Overlay */}
+      <TaskInputOverlay
+        open={taskInputOpen}
+        onOpenChange={setTaskInputOpen}
+        onSubmit={handleTaskSubmit}
+        isSubmitting={taskInputSubmitting}
       />
 
       {/* Create Project Dialog */}

@@ -109,7 +109,7 @@ export default function BoardPage() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex-1 min-h-0 flex gap-3 px-4 pb-4 pt-2 overflow-x-auto">
+        <div className="flex-1 min-h-0 grid gap-3 px-4 pb-4 pt-2" style={{ gridTemplateColumns: `repeat(${visibleStates.length}, minmax(0, 1fr))` }}>
           {visibleStates.map(state => (
             <BoardColumn
               key={state.id}

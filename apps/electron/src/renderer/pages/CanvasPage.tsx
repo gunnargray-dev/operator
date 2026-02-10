@@ -23,16 +23,22 @@ import {
   Sparkles,
   Clock,
   LayoutGrid,
-  Send,
+  ArrowRight,
   Loader2,
   X,
   Square,
   ExternalLink,
   Play,
   ChevronRight,
+  ChevronDown,
   Zap,
   CheckCircle2,
   Footprints,
+  Code,
+  Table2,
+  GitBranch,
+  FileCode,
+  Paperclip,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
@@ -47,6 +53,12 @@ import {
   ensureSessionMessagesLoadedAtom,
 } from '@/atoms/sessions'
 import {
+  sessionArtifactsAtomFamily,
+  setActiveArtifactAtom,
+  canvasVisibleAtomFamily,
+} from '@/atoms/artifacts'
+import type { AnyArtifact, ArtifactType } from '../../shared/artifact-types'
+import {
   activityFeedAtom,
   selectedCanvasSessionIdAtom,
   type ActivityFeedEvent,
@@ -55,59 +67,156 @@ import { sourcesAtom } from '@/atoms/sources'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { navigate, routes } from '@/lib/navigate'
 import { ProcessMonitor } from '@/components/app-shell/ProcessMonitor'
+import { HtopActivityView } from '@/components/app-shell/HtopActivityView'
 import type { SessionMeta } from '@/atoms/sessions'
 import type { LoadedSource } from '../../shared/types'
 import { groupMessagesByTurn, type AssistantTurn, type ActivityItem } from '@craft-agent/ui/chat/turn-utils'
+import { MODELS, getModelShortName } from '@config/models'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import type { FileAttachment } from '../../shared/types'
 
 type ViewMode = 'canvas' | 'board' | 'processes'
 
 // =============================================================================
-// TaskInput — Minimal floating input for quick task creation
+// TaskInput — Floating input for quick task creation with attachments and model selector
 // =============================================================================
 
 function TaskInput({
   onCreateTask,
+  currentModel,
+  onModelChange,
 }: {
-  onCreateTask: (message: string) => Promise<void>
+  onCreateTask: (message: string, attachments?: FileAttachment[]) => Promise<void>
+  currentModel: string
+  onModelChange: (model: string) => void
 }) {
   const [value, setValue] = useState('')
   const [isFocused, setIsFocused] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [attachments, setAttachments] = useState<FileAttachment[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!value.trim() || isSubmitting) return
+    const hasContent = value.trim() || attachments.length > 0
+    if (!hasContent || isSubmitting) return
 
     setIsSubmitting(true)
     try {
-      await onCreateTask(value.trim())
+      await onCreateTask(value.trim(), attachments.length > 0 ? attachments : undefined)
       setValue('')
+      setAttachments([])
       inputRef.current?.blur()
     } finally {
       setIsSubmitting(false)
     }
   }
 
+  const handleAttachClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files?.length) return
+
+    const newAttachments: FileAttachment[] = []
+    for (const file of Array.from(files)) {
+      // Read file as base64 for images, or just store path
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        const base64 = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string)
+          reader.readAsDataURL(file)
+        })
+        newAttachments.push({
+          type: 'image',
+          media_type: file.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+          data: base64.split(',')[1], // Remove data:image/...;base64, prefix
+          name: file.name,
+        })
+      } else {
+        // For non-images, store as file path
+        newAttachments.push({
+          type: 'file',
+          path: (file as File & { path?: string }).path || file.name,
+          name: file.name,
+        })
+      }
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments])
+    // Reset file input
+    e.target.value = ''
+    inputRef.current?.focus()
+  }
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachments(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const hasContent = value.trim() || attachments.length > 0
+
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10">
-      <motion.form
-        onSubmit={handleSubmit}
-        initial={false}
-        animate={{
-          width: isFocused || value ? 480 : 320,
-        }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className={cn(
-          'flex items-center gap-2 px-4 py-3',
-          'bg-background/95 backdrop-blur-sm',
-          'border rounded-xl shadow-lg',
-          'transition-colors',
-          isFocused
-            ? 'border-accent/40 shadow-accent/5'
-            : 'border-foreground/15 hover:border-foreground/25'
-        )}
-      >
+    <div className="shrink-0 border-t border-foreground/10 bg-foreground/[0.02]">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.hpp"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* Attachment preview row */}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-4 pt-2 pb-1 border-b border-foreground/5">
+          {attachments.map((att, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-1.5 px-2 py-1 bg-foreground/5 rounded-md text-xs text-foreground/70"
+            >
+              {att.type === 'image' ? (
+                <img
+                  src={`data:${att.media_type};base64,${att.data}`}
+                  alt={att.name}
+                  className="h-4 w-4 rounded object-cover"
+                />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              <span className="max-w-[100px] truncate">{att.name}</span>
+              <button
+                type="button"
+                onClick={() => handleRemoveAttachment(i)}
+                className="text-foreground/40 hover:text-foreground/70"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Main input row */}
+      <form onSubmit={handleSubmit} className="flex items-center gap-3 px-4 py-3 border-b border-foreground/5">
+        {/* Attachment button */}
+        <button
+          type="button"
+          onClick={handleAttachClick}
+          className={cn(
+            'shrink-0 p-1 rounded transition-colors',
+            'text-foreground/40 hover:text-foreground/70',
+            attachments.length > 0 && 'text-accent'
+          )}
+          title="Attach files"
+        >
+          <Paperclip className="h-4 w-4" />
+        </button>
+
+        {/* Text input */}
         <input
           ref={inputRef}
           type="text"
@@ -118,34 +227,87 @@ function TaskInput({
           placeholder="Start a new task..."
           disabled={isSubmitting}
           className={cn(
-            'flex-1 bg-transparent text-sm text-foreground',
-            'placeholder:text-foreground/40',
+            'flex-1 bg-transparent text-[13px] text-foreground',
+            'placeholder:text-foreground/30',
             'focus:outline-none',
             'disabled:opacity-50'
           )}
         />
-        <motion.button
+
+        {/* Model selector */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'shrink-0 flex items-center gap-1 px-2 py-1 rounded-md text-xs',
+                'text-foreground/50 hover:text-foreground/70 hover:bg-foreground/5',
+                'transition-colors'
+              )}
+            >
+              {getModelShortName(currentModel)}
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            {MODELS.map((model) => (
+              <DropdownMenuItem
+                key={model.id}
+                onClick={() => onModelChange(model.id)}
+                className={cn(
+                  'flex flex-col items-start gap-0.5 cursor-pointer',
+                  currentModel === model.id && 'bg-accent/10'
+                )}
+              >
+                <span className="font-medium text-sm">{model.name}</span>
+                <span className="text-xs text-foreground/50">{model.description}</span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Submit button */}
+        <button
           type="submit"
-          disabled={!value.trim() || isSubmitting}
-          initial={false}
-          animate={{
-            opacity: value.trim() ? 1 : 0,
-            scale: value.trim() ? 1 : 0.8,
-          }}
+          disabled={!hasContent || isSubmitting}
           className={cn(
-            'shrink-0 p-1.5 rounded-lg',
-            'text-foreground/50 hover:text-accent hover:bg-accent/10',
-            'disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-foreground/50',
+            'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg',
+            'text-accent font-medium text-sm',
+            'hover:bg-accent/10',
+            'disabled:opacity-30 disabled:hover:bg-transparent',
             'transition-colors'
           )}
         >
           {isSubmitting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <Send className="h-4 w-4" />
+            <>
+              Run
+              <ArrowRight className="h-3.5 w-3.5" />
+            </>
           )}
-        </motion.button>
-      </motion.form>
+        </button>
+      </form>
+
+      {/* Keyboard shortcuts row */}
+      <div className="flex items-center gap-4 px-4 py-2 text-[11px] text-foreground/40">
+        <div className="flex items-center gap-1.5">
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded text-[10px] font-medium">↑↓</kbd>
+          <span>Navigate</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded text-[10px] font-medium">Space</kbd>
+          <span>Expand</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded text-[10px] font-medium">Enter</kbd>
+          <span>Open</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded text-[10px] font-medium">x</kbd>
+          <span>Stop</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -492,6 +654,12 @@ const OUTPUT_W = 340
 const OUTPUT_H = 140
 const OUTPUT_OFFSET_Y = 300
 
+/** Artifact node (positioned to the right of output) */
+const ARTIFACT_W = 180
+const ARTIFACT_H = 100
+const ARTIFACT_OFFSET_Y = 300
+const ARTIFACT_OFFSET_X = 280
+
 const BASE_ORBIT = 480
 const DETAIL_OFFSET = 260
 
@@ -782,9 +950,11 @@ function ConnectionLine({
 function AgentNode({
   session,
   isProcessing,
+  onClick,
 }: {
   session: SessionMeta | undefined
   isProcessing?: boolean
+  onClick?: () => void
 }) {
   const title = session?.name || session?.preview || 'Agent'
   const rx = WCX - AGENT_W / 2
@@ -796,6 +966,13 @@ function AgentNode({
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 180, damping: 20 }}
+      style={{ cursor: onClick ? 'pointer' : 'default' }}
+      onClick={(e) => {
+        if (onClick) {
+          e.stopPropagation()
+          onClick()
+        }
+      }}
     >
       {/* Outer border */}
       <rect
@@ -1073,6 +1250,88 @@ function OutputNode({
 }
 
 // =============================================================================
+// ArtifactNode — shows created artifacts that can be opened
+// =============================================================================
+
+function getArtifactIcon(type: ArtifactType, size = 'h-4 w-4') {
+  switch (type) {
+    case 'html':
+      return <Globe className={`${size} text-info`} />
+    case 'document':
+      return <FileText className={`${size} text-success`} />
+    case 'spreadsheet':
+      return <Table2 className={`${size} text-accent`} />
+    case 'code':
+      return <FileCode className={`${size} text-warning`} />
+    case 'diagram':
+      return <GitBranch className={`${size} text-info`} />
+    default:
+      return <FileText className={`${size} text-foreground/50`} />
+  }
+}
+
+function ArtifactNode({
+  artifact,
+  position,
+  index,
+  onClick,
+  onDoubleClick,
+}: {
+  artifact: AnyArtifact
+  position: { x: number; y: number }
+  index: number
+  onClick: () => void
+  onDoubleClick?: () => void
+}) {
+  const cx = position.x
+  const cy = position.y
+  const rx = cx - ARTIFACT_W / 2
+  const ry = cy - ARTIFACT_H / 2
+
+  return (
+    <motion.g
+      initial={{ scale: 0, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 180, damping: 20, delay: 0.15 + index * 0.05 }}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+      style={{ cursor: 'pointer' }}
+    >
+      <rect
+        x={rx}
+        y={ry}
+        width={ARTIFACT_W}
+        height={ARTIFACT_H}
+        rx={12}
+        className="fill-accent/8 stroke-accent/30 hover:stroke-accent/50 transition-colors"
+        strokeWidth={1.5}
+      />
+      <foreignObject x={rx} y={ry} width={ARTIFACT_W} height={ARTIFACT_H} style={{ pointerEvents: 'none' }}>
+        <div className="flex flex-col h-full p-3" style={{ pointerEvents: 'none' }}>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="shrink-0 h-7 w-7 rounded-lg bg-accent/10 flex items-center justify-center">
+              {getArtifactIcon(artifact.type)}
+            </div>
+            <span className="text-[10px] font-medium text-accent/70 uppercase tracking-wider">
+              {artifact.type}
+            </span>
+          </div>
+          <p className="text-[12px] font-medium text-foreground leading-snug line-clamp-2 flex-1">
+            {artifact.title}
+          </p>
+          <div className="flex items-center justify-end pt-1.5">
+            <span className="inline-flex items-center gap-1 text-[10px] text-accent/60">
+              <ExternalLink className="h-3 w-3" />
+              Open
+            </span>
+          </div>
+        </div>
+      </foreignObject>
+    </motion.g>
+  )
+}
+
+// =============================================================================
 // NodeDetailPopup — shows details when a node is clicked
 // =============================================================================
 
@@ -1199,10 +1458,18 @@ function NodeGraph({
   session,
   nodes,
   model,
+  artifacts,
+  onArtifactClick,
+  onArtifactOpen,
+  onAgentClick,
 }: {
   session: SessionMeta | undefined
   nodes: GraphNode[]
   model?: string | null
+  artifacts?: AnyArtifact[]
+  onArtifactClick?: (artifact: AnyArtifact) => void
+  onArtifactOpen?: (artifact: AnyArtifact) => void
+  onAgentClick?: () => void
 }) {
   const orbit = nodes.length > 8 ? 560 : BASE_ORBIT
   const positions = useMemo(
@@ -1469,11 +1736,43 @@ function NodeGraph({
           isProcessing={isProcessing}
         />
 
+        {/* Connection lines: agent -> artifacts */}
+        {artifacts && artifacts.map((artifact, i) => {
+          const artifactX = WCX + ARTIFACT_OFFSET_X + (i * (ARTIFACT_W + 20))
+          const artifactY = WCY + ARTIFACT_OFFSET_Y
+          return (
+            <ConnectionLine
+              key={`artifact-line-${artifact.id}`}
+              fromCenter={agentCenter}
+              fromSize={agentSize}
+              toCenter={{ x: artifactX, y: artifactY }}
+              toSize={{ w: ARTIFACT_W, h: ARTIFACT_H }}
+              isActive={true}
+            />
+          )
+        })}
+
+        {/* Artifact nodes */}
+        {artifacts && artifacts.map((artifact, i) => {
+          const artifactX = WCX + ARTIFACT_OFFSET_X + (i * (ARTIFACT_W + 20))
+          const artifactY = WCY + ARTIFACT_OFFSET_Y
+          return (
+            <ArtifactNode
+              key={`artifact-${artifact.id}`}
+              artifact={artifact}
+              position={{ x: artifactX, y: artifactY }}
+              index={i}
+              onClick={() => onArtifactClick?.(artifact)}
+              onDoubleClick={() => onArtifactOpen?.(artifact)}
+            />
+          )
+        })}
+
         {/* Model node */}
         <ModelNode model={model} isProcessing={isProcessing} />
 
         {/* Center agent node (on top) */}
-        <AgentNode session={session} isProcessing={isProcessing} />
+        <AgentNode session={session} isProcessing={isProcessing} onClick={onAgentClick} />
 
         {/* Node detail popup (rendered on top of everything) */}
         {selectedNodeId && (() => {
@@ -1819,11 +2118,11 @@ function BoardView({
   }, [])
 
   return (
-    <div className="flex-1 min-h-0 flex gap-3 px-4 pb-4 pt-2 overflow-x-auto">
+    <div className="flex-1 min-h-0 grid gap-3 px-4 pb-4 pt-2" style={{ gridTemplateColumns: `repeat(${BOARD_COLUMNS.length}, minmax(0, 1fr))` }}>
       {BOARD_COLUMNS.map(column => (
         <div
           key={column.id}
-          className="flex-shrink-0 w-72 h-full flex flex-col bg-foreground/[0.02] rounded-lg border border-foreground/8"
+          className="min-w-0 h-full flex flex-col bg-foreground/[0.02] rounded-lg border border-foreground/8"
         >
           {/* Column header */}
           <div className="flex-shrink-0 flex items-center justify-between px-3 py-2.5 border-b border-foreground/8">
@@ -1873,12 +2172,14 @@ function CanvasView({
   sessionMetaMap,
   activityFeed,
   allSources,
+  onOpenSidebar,
 }: {
   selectedSessionId: string | null
   setSelectedSessionId: (id: string | null) => void
   sessionMetaMap: Map<string, SessionMeta>
   activityFeed: ActivityFeedEvent[]
   allSources: LoadedSource[]
+  onOpenSidebar?: (sessionId: string) => void
 }) {
   const selectedSession = selectedSessionId
     ? sessionMetaMap.get(selectedSessionId)
@@ -1888,6 +2189,31 @@ function CanvasView({
     ? sessionAtomFamily(selectedSessionId)
     : null
   const fullSession = useAtomValue(sessionAtom ?? atom(null))
+
+  // Get artifacts for selected session
+  const artifactsAtom = selectedSessionId
+    ? sessionArtifactsAtomFamily(selectedSessionId)
+    : null
+  const artifacts = useAtomValue(artifactsAtom ?? atom<AnyArtifact[]>([]))
+
+  // Action to open artifact in canvas
+  const setActiveArtifact = useSetAtom(setActiveArtifactAtom)
+
+  // Handle artifact click - open sidebar (single click) or navigate to full view (double click)
+  const handleArtifactClick = useCallback((artifact: AnyArtifact) => {
+    if (selectedSessionId) {
+      // Open sidebar to show session details
+      onOpenSidebar?.(selectedSessionId)
+    }
+  }, [selectedSessionId, onOpenSidebar])
+
+  // Handle artifact double-click - navigate to full view with artifact active
+  const handleArtifactOpen = useCallback((artifact: AnyArtifact) => {
+    if (selectedSessionId) {
+      setActiveArtifact(selectedSessionId, artifact.id)
+      navigate(routes.view.allChats(selectedSessionId))
+    }
+  }, [selectedSessionId, setActiveArtifact])
 
   // Load messages when session is selected
   useEffect(() => {
@@ -1957,12 +2283,251 @@ function CanvasView({
     }))
   }, [selectedSessionId, activityFeed, allSources])
 
+  // Handle clicking the center agent node - open sidebar
+  const handleAgentClick = useCallback(() => {
+    if (selectedSessionId) {
+      onOpenSidebar?.(selectedSessionId)
+    }
+  }, [selectedSessionId, onOpenSidebar])
+
   return (
     <NodeGraph
       session={selectedSession}
       nodes={graphNodes}
       model={fullSession?.model}
+      artifacts={artifacts}
+      onArtifactClick={handleArtifactClick}
+      onArtifactOpen={handleArtifactOpen}
+      onAgentClick={handleAgentClick}
     />
+  )
+}
+
+// =============================================================================
+// FloatingTasksPanel — Floating cards overlaying canvas on the right
+// =============================================================================
+
+function FloatingTaskCard({
+  meta,
+  isSelected,
+  onClick,
+  onDoubleClick,
+  onStop,
+}: {
+  meta: SessionMeta
+  isSelected: boolean
+  onClick: () => void
+  onDoubleClick?: () => void
+  onStop?: () => void
+}) {
+  const title = meta.name || meta.preview || 'Untitled'
+  const timeAgo = meta.lastMessageAt
+    ? formatDistanceToNow(new Date(meta.lastMessageAt), { addSuffix: false })
+    : null
+
+  const isRunning = meta.isProcessing
+  const isWaiting = meta.lastMessageRole === 'plan'
+  const isScheduled = meta.scheduleConfig?.enabled && !isRunning
+
+  return (
+    <motion.button
+      layout
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+      className={cn(
+        "w-full text-left rounded-lg border p-3 transition-colors backdrop-blur-sm",
+        isRunning
+          ? "border-success/30 bg-success/5 shadow-lg shadow-success/5"
+          : isSelected
+            ? "border-accent/30 bg-accent/5 shadow-md"
+            : "border-foreground/10 bg-background/80 hover:border-foreground/20 hover:bg-background/90 shadow-sm"
+      )}
+    >
+      {/* Status + Time row */}
+      <div className="flex items-center gap-2 mb-2">
+        {isRunning && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-success bg-success/10 rounded px-1.5 py-0.5">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            RUNNING
+          </span>
+        )}
+        {isWaiting && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-warning bg-warning/10 rounded px-1.5 py-0.5">
+            <AlertCircle className="h-3 w-3" />
+            INPUT
+          </span>
+        )}
+        {isScheduled && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-info bg-info/10 rounded px-1.5 py-0.5">
+            <Clock className="h-3 w-3" />
+            SCHED
+          </span>
+        )}
+        {!isRunning && !isWaiting && !isScheduled && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-foreground/40 bg-foreground/5 rounded px-1.5 py-0.5">
+            <CheckCircle2 className="h-3 w-3" />
+            DONE
+          </span>
+        )}
+        {timeAgo && (
+          <span className="text-[10px] text-foreground/30 ml-auto">
+            {timeAgo}
+          </span>
+        )}
+      </div>
+
+      {/* Title */}
+      <p className="text-[12px] font-medium text-foreground leading-snug line-clamp-2 mb-1.5">
+        {title}
+      </p>
+
+      {/* Current step for running tasks */}
+      {isRunning && meta.currentStep && (
+        <p className="text-[10px] text-success/70 truncate mb-2">
+          {meta.currentStep}
+        </p>
+      )}
+
+      {/* Footer with actions */}
+      {isRunning && onStop && (
+        <div className="flex items-center justify-end pt-2 border-t border-foreground/5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onStop()
+            }}
+            className="inline-flex items-center gap-1 text-[10px] text-destructive/70 hover:text-destructive transition-colors"
+          >
+            <Square className="h-3 w-3" />
+            Stop
+          </button>
+        </div>
+      )}
+    </motion.button>
+  )
+}
+
+function FloatingTasksPanel({
+  sessions,
+  selectedSessionId,
+  onSelectSession,
+  onOpenSession,
+  onStopSession,
+}: {
+  sessions: SessionMeta[]
+  selectedSessionId: string | null
+  onSelectSession: (id: string) => void
+  onOpenSession: (id: string) => void
+  onStopSession: (id: string) => void
+}) {
+  // Group sessions: running first, then waiting, then recent completed
+  const groupedSessions = useMemo(() => {
+    const running: SessionMeta[] = []
+    const waiting: SessionMeta[] = []
+    const recent: SessionMeta[] = []
+    const recentThreshold = Date.now() - 30 * 60 * 1000 // last 30 min
+
+    for (const session of sessions) {
+      if (session.isProcessing) {
+        running.push(session)
+      } else if (session.lastMessageRole === 'plan') {
+        waiting.push(session)
+      } else if (session.lastMessageAt && session.lastMessageAt > recentThreshold) {
+        recent.push(session)
+      }
+    }
+
+    // Sort recent by time
+    recent.sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
+
+    return { running, waiting, recent: recent.slice(0, 5) }
+  }, [sessions])
+
+  const hasContent = groupedSessions.running.length > 0 ||
+    groupedSessions.waiting.length > 0 ||
+    groupedSessions.recent.length > 0
+
+  if (!hasContent) return null
+
+  return (
+    <div className="absolute top-16 right-4 bottom-20 w-64 z-10 pointer-events-none">
+      <ScrollArea className="h-full pointer-events-auto">
+        <div className="space-y-3 pr-2">
+          {/* Running tasks */}
+          {groupedSessions.running.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Running
+                </span>
+              </div>
+              <div className="space-y-2">
+                {groupedSessions.running.map(session => (
+                  <FloatingTaskCard
+                    key={session.id}
+                    meta={session}
+                    isSelected={session.id === selectedSessionId}
+                    onClick={() => onSelectSession(session.id)}
+                    onDoubleClick={() => onOpenSession(session.id)}
+                    onStop={() => onStopSession(session.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Waiting for input */}
+          {groupedSessions.waiting.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-warning" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Needs Input
+                </span>
+              </div>
+              <div className="space-y-2">
+                {groupedSessions.waiting.map(session => (
+                  <FloatingTaskCard
+                    key={session.id}
+                    meta={session}
+                    isSelected={session.id === selectedSessionId}
+                    onClick={() => onSelectSession(session.id)}
+                    onDoubleClick={() => onOpenSession(session.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recently completed */}
+          {groupedSessions.recent.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-foreground/30" />
+                <span className="text-[10px] font-medium text-foreground/50 uppercase tracking-wider">
+                  Recent
+                </span>
+              </div>
+              <div className="space-y-2">
+                {groupedSessions.recent.map(session => (
+                  <FloatingTaskCard
+                    key={session.id}
+                    meta={session}
+                    isSelected={session.id === selectedSessionId}
+                    onClick={() => onSelectSession(session.id)}
+                    onDoubleClick={() => onOpenSession(session.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   )
 }
 
@@ -1995,15 +2560,15 @@ export default function CanvasPage() {
   const activityFeed = useAtomValue(activityFeedAtom)
   const allSources = useAtomValue(sourcesAtom)
   const [selectedSessionId, setSelectedSessionId] = useAtom(selectedCanvasSessionIdAtom)
-  const { activeWorkspaceId, onCreateSession, onSendMessage, openRightSidebar } = useAppShellContext()
+  const { activeWorkspaceId, onCreateSession, onSendMessage, openRightSidebar, currentModel, setCurrentModel } = useAppShellContext()
 
   const [viewMode, setViewMode] = useState<ViewMode>('processes')
 
   // Create a new task (session + message) - stays on Activity page
-  const handleCreateTask = useCallback(async (message: string) => {
+  const handleCreateTask = useCallback(async (message: string, attachments?: FileAttachment[]) => {
     if (!activeWorkspaceId) return
     const session = await onCreateSession(activeWorkspaceId)
-    onSendMessage(session.id, message)
+    onSendMessage(session.id, message, attachments)
     // Select the new session in canvas view to show it's running
     setSelectedSessionId(session.id)
     // Stay on Activity page - task will appear in the feed/processes
@@ -2040,9 +2605,26 @@ export default function CanvasPage() {
     }
   }, [selectedSessionId, activeSessions, setSelectedSessionId])
 
-  const handleActivityCardClick = useCallback((sessionId: string) => {
+  // Handle selecting a session - shows nodes on canvas (does NOT open sidebar)
+  const handleSelectSession = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId)
   }, [setSelectedSessionId])
+
+  // Handle opening a session full view - navigates
+  const handleOpenSession = useCallback((sessionId: string) => {
+    navigate(routes.view.allChats(sessionId))
+  }, [])
+
+  // Handle stop session
+  const handleStopSession = useCallback((sessionId: string) => {
+    window.electronAPI.cancelProcessing(sessionId, false).catch(console.error)
+  }, [])
+
+  // Workspace sessions for floating panel
+  const workspaceSessions = useMemo(() => {
+    return Array.from(sessionMetaMap.values())
+      .filter(s => s.workspaceId === activeWorkspaceId)
+  }, [sessionMetaMap, activeWorkspaceId])
 
   return (
     <div className="flex flex-col h-full">
@@ -2096,24 +2678,35 @@ export default function CanvasPage() {
                   : 'text-foreground/50 hover:text-foreground hover:bg-transparent'
               )}
             >
-              <Terminal className="h-3.5 w-3.5" />
-              Processes
+              <Monitor className="h-3.5 w-3.5" />
+              Monitor
             </Button>
           </div>
         }
       />
 
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Main content: Canvas, Board, or Processes */}
-        <div className="flex-1 min-w-0 relative">
+        <div className="flex-1 min-w-0 min-h-0 relative overflow-hidden">
           {viewMode === 'canvas' && (
-            <CanvasView
-              selectedSessionId={selectedSessionId}
-              setSelectedSessionId={setSelectedSessionId}
-              sessionMetaMap={sessionMetaMap}
-              activityFeed={activityFeed}
-              allSources={allSources}
-            />
+            <>
+              <CanvasView
+                selectedSessionId={selectedSessionId}
+                setSelectedSessionId={setSelectedSessionId}
+                sessionMetaMap={sessionMetaMap}
+                activityFeed={activityFeed}
+                allSources={allSources}
+                onOpenSidebar={openRightSidebar}
+              />
+              {/* Floating tasks panel on right */}
+              <FloatingTasksPanel
+                sessions={workspaceSessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={handleSelectSession}
+                onOpenSession={handleOpenSession}
+                onStopSession={handleStopSession}
+              />
+            </>
           )}
           {viewMode === 'board' && (
             <BoardView
@@ -2122,25 +2715,16 @@ export default function CanvasPage() {
             />
           )}
           {viewMode === 'processes' && (
-            <ProcessMonitor
-              sessions={Array.from(sessionMetaMap.values())}
-              onViewSession={(sessionId) => {
-                setSelectedSessionId(sessionId)
-                // Open the right sidebar to show session details
-                openRightSidebar?.(sessionId)
-              }}
-              onStopSession={async (sessionId) => {
-                await window.electronAPI.cancelProcessing(sessionId, false)
-              }}
-              onRunNow={async (sessionId) => {
-                await window.electronAPI.sessionCommand(sessionId, { type: 'runScheduledNow' })
-              }}
-            />
+            <HtopActivityView />
           )}
-
-          {/* Floating task input */}
-          <TaskInput onCreateTask={handleCreateTask} />
         </div>
+
+        {/* Docked task input - shown on all views */}
+        <TaskInput
+          onCreateTask={handleCreateTask}
+          currentModel={currentModel}
+          onModelChange={setCurrentModel}
+        />
       </div>
     </div>
   )

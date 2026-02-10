@@ -224,7 +224,13 @@ export const updateSessionAtom = atom(
     if (newSession) {
       const metaMap = get(sessionMetaMapAtom)
       const newMetaMap = new Map(metaMap)
+      const existingMeta = metaMap.get(sessionId)
       const meta = extractSessionMeta(newSession)
+      // Preserve fields that come from session_meta_update events (not in Session type)
+      // These are set by broadcastSessionMetaUpdate in main process during tool_start
+      if (existingMeta?.currentStep) {
+        meta.currentStep = existingMeta.currentStep
+      }
       newMetaMap.set(sessionId, meta)
       set(sessionMetaMapAtom, newMetaMap)
 
@@ -448,14 +454,20 @@ export const syncSessionsToAtomsAtom = atom(
     // Update metadata map for list display
     // Note: We still update metadata from React state, which is fine because
     // metadata doesn't include messages - the streaming content we're protecting
+    const existingMetaMap = get(sessionMetaMapAtom)
     const metaMap = new Map<string, SessionMeta>()
     for (const session of sessions) {
       const meta = extractSessionMeta(session)
+      const existingMeta = existingMetaMap.get(session.id)
       // Preserve isProcessing from atom if atom is processing
       // React state may have stale isProcessing: false during streaming
       const atomSession = get(sessionAtomFamily(session.id))
       if (atomSession?.isProcessing) {
         meta.isProcessing = true
+      }
+      // Preserve currentStep from session_meta_update events (not in Session type)
+      if (existingMeta?.currentStep) {
+        meta.currentStep = existingMeta.currentStep
       }
       metaMap.set(session.id, meta)
     }
